@@ -115,11 +115,6 @@ namespace detail
     // so the loops poll() with a timeout and check running_ instead.
     running_ = false;
 
-    const int client_fd = client_fd_.exchange(-1);
-    if (client_fd >= 0) {
-      ::shutdown(client_fd, SHUT_RDWR);
-    }
-
     if (thread_.joinable()) {
       thread_.join();
     }
@@ -139,9 +134,7 @@ namespace detail
       const int client_fd = ::accept(listen_fd_, nullptr, nullptr);
       if (client_fd < 0) continue;
 
-      client_fd_ = client_fd;
       recv_loop(client_fd);
-      client_fd_ = -1;
       ::close(client_fd);
     }
   }

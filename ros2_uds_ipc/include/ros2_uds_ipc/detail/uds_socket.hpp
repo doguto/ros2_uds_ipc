@@ -61,7 +61,6 @@ namespace detail
     size_t capacity_;
     ReceiveHandler on_receive_;
     int listen_fd_ = -1;
-    std::atomic<int> client_fd_{-1};
     std::atomic<bool> running_{true};
     std::thread thread_;
   };
