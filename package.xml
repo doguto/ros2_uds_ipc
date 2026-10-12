@@ -1,20 +1,26 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>uds_ipc</name>
+  <name>ros2_uds_ipc</name>
   <version>0.1.0</version>
   <description>
-    AF_UNIX SOCK_SEQPACKET 上で rclcpp のメッセージ型をそのまま publish/subscribe するための
-    薄いヘッダオンリーライブラリ. DDS の discovery / QoS マッチング / RTPS プロトコル層を経由せず,
-    プロセスを跨いだ低遅延な配送が要る event-driven な経路 (例: ros2_control -> CAN API) のために使う.
-    SOCK_SEQPACKET はカーネルレベルで到達を保証するので, ベストエフォートではない.
+    A thin library for publishing and subscribing rclcpp message types as-is over AF_UNIX SOCK_SEQPACKET.
+    It bypasses DDS discovery, QoS matching and the RTPS protocol layer, and is meant for event-driven
+    paths that need low-latency delivery across processes (e.g. ros2_control -> CAN API).
+    SOCK_SEQPACKET guarantees delivery at the kernel level, so it is not best-effort.
   </description>
-  <maintainer email="hoge@gmail.com">kuto</maintainer>
+  <maintainer email="doguto110@gmail.com">kuto</maintainer>
   <license>MIT</license>
+
+  <url type="repository">https://github.com/doguto/ros2_uds_ipc</url>
+  <url type="bugtracker">https://github.com/doguto/ros2_uds_ipc/issues</url>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>std_msgs</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
