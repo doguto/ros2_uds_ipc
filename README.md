@@ -11,6 +11,38 @@ DDS brings discovery, QoS matching and the RTPS protocol layer. For an event-dri
 processes on the same machine that must react the moment a message arrives (e.g. `ros2_control` -> CAN
 gateway), that machinery is latency you do not need.
 
+### Where the latency comes from
+
+The path from the publisher handing over a message to the subscriber callback being invoked has four stages:
+
+| Stage | What happens |
+|---|---|
+| 1. Serialization | The ROS message is turned into CDR bytes |
+| 2. Data transfer | The bytes are moved from the sending process to the receiving process |
+| 3. Receiver wake-up | The kernel wakes the waiting receive thread and puts it on a CPU |
+| 4. Middleware layers | RTPS processing -> DDS receive thread -> wait set -> executor -> callback |
+
+For commands of tens to hundreds of bytes, the copy in stage 2 takes very little time and almost all of the
+latency comes from stages 3 and 4. Shared memory and zero-copy speed up stage 2, so stages 3 and 4 remain
+unchanged when you use them.
+
+### What ros2_uds_ipc skips
+
+```
+DDS:           kernel -> DDS receive thread -> RTPS processing -> wait set -> executor -> callback
+ros2_uds_ipc:  kernel -> dedicated thread waiting in poll() -> callback
+```
+
+- **Stage 4 is skipped entirely.** The receive thread woken by the kernel deserializes the message and
+  invokes the callback itself. There is no hand-off between threads.
+- **Stage 2 is only a copy through the kernel**, which is negligible for small messages.
+- **Stage 1 remains.** CDR is used to support any rosidl type, including variable-length ones. DDS pays
+  the same cost.
+- **Stage 3 remains.** It is determined by the scheduler and CPU power states, and is addressed outside
+  the library (real-time scheduling, CPU pinning and so on).
+
+### Features
+
 `ros2_uds_ipc` keeps the ROS 2 message types but replaces the transport:
 
 - **Any rosidl message type** — a message is serialized to CDR once and sent with a single `send()`.
