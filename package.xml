@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>uds_ipc</name>
+  <version>0.1.0</version>
+  <description>
+    AF_UNIX SOCK_SEQPACKET 上で rclcpp のメッセージ型をそのまま publish/subscribe するための
+    薄いヘッダオンリーライブラリ. DDS の discovery / QoS マッチング / RTPS プロトコル層を経由せず,
+    プロセスを跨いだ低遅延な配送が要る event-driven な経路 (例: ros2_control -> CAN API) のために使う.
+    SOCK_SEQPACKET はカーネルレベルで到達を保証するので, ベストエフォートではない.
+  </description>
+  <maintainer email="hoge@gmail.com">kuto</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
