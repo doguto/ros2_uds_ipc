@@ -81,8 +81,7 @@ namespace detail
     return false;
   }
 
-  UdsServerSocket::UdsServerSocket(
-    std::string path, uint8_t * buffer, size_t capacity, ReceiveHandler on_receive)
+  UdsServerSocket::UdsServerSocket(std::string path, uint8_t * buffer, size_t capacity, ReceiveHandler on_receive)
   : path_(std::move(path)), buffer_(buffer), capacity_(capacity), on_receive_(std::move(on_receive))
   {
     const auto parent = std::filesystem::path(path_).parent_path();

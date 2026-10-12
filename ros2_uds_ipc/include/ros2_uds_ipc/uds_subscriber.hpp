@@ -2,6 +2,7 @@
 #define ROS2_UDS_IPC__UDS_SUBSCRIBER_HPP_
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -11,6 +12,7 @@
 #include <rclcpp/serialization.hpp>
 #include <rclcpp/serialized_message.hpp>
 
+#include "ros2_uds_ipc/detail/raw_copy.hpp"
 #include "ros2_uds_ipc/detail/uds_socket.hpp"
 #include "ros2_uds_ipc/uds_mirror.hpp"
 
@@ -24,19 +26,20 @@ namespace uds_ipc
   public:
     using Callback = std::function<void(const MessageT &)>;
 
-    // max_message_size: serialized messages larger than this are truncated.
+    // max_message_size: serialized messages larger than this are truncated. Unused for fixed-size messages.
     // mirror: a publisher from create_uds_mirror(). If set, received messages are also forwarded to DDS.
     // Throws std::runtime_error if the socket cannot be set up.
     UdsSubscriber(
-      std::string path, Callback callback, size_t max_message_size = 65536,
+      std::string path,
+      Callback callback,
+      size_t max_message_size = 65536,
       rclcpp::GenericPublisher::SharedPtr mirror = nullptr
     )
     : callback_(std::move(callback)),
       mirror_(mirror ? std::make_unique<UdsMirrorWorker>(std::move(mirror)) : nullptr),
-      serialized_(max_message_size),
+      serialized_(detail::is_raw_copyable<MessageT> ? 0 : max_message_size),
       socket_(
-        std::move(path), serialized_.get_rcl_serialized_message().buffer,
-        serialized_.get_rcl_serialized_message().buffer_capacity,
+        std::move(path), receive_buffer(), receive_capacity(),
         [this](size_t length) { on_receive(length); }
       )
     {}
@@ -45,16 +48,48 @@ namespace uds_ipc
     UdsSubscriber & operator=(const UdsSubscriber &) = delete;
 
   private:
+    // Raw-copyable messages are received straight into msg_; others into the CDR buffer.
+    uint8_t * receive_buffer()
+    {
+      if constexpr (detail::is_raw_copyable<MessageT>) {
+        return reinterpret_cast<uint8_t *>(&msg_);
+      } else {
+        return serialized_.get_rcl_serialized_message().buffer;
+      }
+    }
+
+    size_t receive_capacity() const
+    {
+      if constexpr (detail::is_raw_copyable<MessageT>) {
+        return sizeof(MessageT);
+      } else {
+        return serialized_.get_rcl_serialized_message().buffer_capacity;
+      }
+    }
+
     void on_receive(size_t length)
     {
-      auto & rcl_msg = serialized_.get_rcl_serialized_message();
-      rcl_msg.buffer_length = length;
+      if constexpr (detail::is_raw_copyable<MessageT>) {
+        if (length != sizeof(MessageT)) return;  // Not this message type.
 
-      serializer_.deserialize_message(&serialized_, &msg_);
-      callback_(msg_);
+        callback_(msg_);
 
-      if (mirror_ && mirror_->has_subscribers()) {
-        mirror_->enqueue(rcl_msg.buffer, rcl_msg.buffer_length);
+        // DDS still needs CDR, so serialize only while someone is listening to the mirror.
+        if (mirror_ && mirror_->has_subscribers()) {
+          serializer_.serialize_message(&msg_, &serialized_);
+          const auto & rcl_msg = serialized_.get_rcl_serialized_message();
+          mirror_->enqueue(rcl_msg.buffer, rcl_msg.buffer_length);
+        }
+      } else {
+        auto & rcl_msg = serialized_.get_rcl_serialized_message();
+        rcl_msg.buffer_length = length;
+
+        serializer_.deserialize_message(&serialized_, &msg_);
+        callback_(msg_);
+
+        if (mirror_ && mirror_->has_subscribers()) {
+          mirror_->enqueue(rcl_msg.buffer, rcl_msg.buffer_length);
+        }
       }
     }
 

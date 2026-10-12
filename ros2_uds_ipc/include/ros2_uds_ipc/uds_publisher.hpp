@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -11,6 +12,7 @@
 #include <rclcpp/serialization.hpp>
 #include <rclcpp/serialized_message.hpp>
 
+#include "ros2_uds_ipc/detail/raw_copy.hpp"
 #include "ros2_uds_ipc/detail/uds_socket.hpp"
 #include "ros2_uds_ipc/uds_mirror.hpp"
 
@@ -49,14 +51,27 @@ namespace uds_ipc
         return false;
       }
 
-      serializer_.serialize_message(&msg, &serialized_);
-      const auto & rcl_msg = serialized_.get_rcl_serialized_message();
+      if constexpr (detail::is_raw_copyable<MessageT>) {
+        // DDS still needs CDR, so serialize only while someone is listening to the mirror.
+        const bool sent = socket_.is_connected() &&
+          socket_.send(reinterpret_cast<const uint8_t *>(&msg), sizeof(MessageT), send_timeout);
+        if (mirroring) {
+          serializer_.serialize_message(&msg, &serialized_);
+          const auto & rcl_msg = serialized_.get_rcl_serialized_message();
+          mirror_->enqueue(rcl_msg.buffer, rcl_msg.buffer_length);
+        }
+        return sent;
+      } else {
+        serializer_.serialize_message(&msg, &serialized_);
+        const auto & rcl_msg = serialized_.get_rcl_serialized_message();
 
-      const bool sent = socket_.is_connected() && socket_.send(rcl_msg.buffer, rcl_msg.buffer_length, send_timeout);
-      if (mirroring) {
-        mirror_->enqueue(rcl_msg.buffer, rcl_msg.buffer_length);
+        const bool sent =
+          socket_.is_connected() && socket_.send(rcl_msg.buffer, rcl_msg.buffer_length, send_timeout);
+        if (mirroring) {
+          mirror_->enqueue(rcl_msg.buffer, rcl_msg.buffer_length);
+        }
+        return sent;
       }
-      return sent;
     }
 
   private:

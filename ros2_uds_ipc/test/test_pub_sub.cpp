@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <std_msgs/msg/color_rgba.hpp>
 #include <std_msgs/msg/string.hpp>
 
 #include "ros2_uds_ipc/uds_publisher.hpp"
@@ -57,6 +58,45 @@ TEST(UdsPubSub, DeliversMessagesInOrder)
   ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return received.size() == message_count; }));
   for (size_t i = 0; i < message_count; ++i) {
     EXPECT_EQ(received[i], "message " + std::to_string(i));
+  }
+}
+
+// Fixed-size messages skip CDR serialization and are sent as raw bytes.
+TEST(UdsPubSub, DeliversFixedSizeMessagesAsRawBytes)
+{
+  static_assert(uds_ipc::detail::is_raw_copyable<std_msgs::msg::ColorRGBA>);
+  static_assert(!uds_ipc::detail::is_raw_copyable<std_msgs::msg::String>);
+
+  const std::string path = socket_path("fixed_size.sock");
+  const size_t message_count = 100;
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<std_msgs::msg::ColorRGBA> received;
+  uds_ipc::UdsSubscriber<std_msgs::msg::ColorRGBA> subscriber(
+    path, [&](const std_msgs::msg::ColorRGBA & msg) {
+      std::lock_guard<std::mutex> lock(mutex);
+      received.push_back(msg);
+      cv.notify_one();
+    });
+
+  uds_ipc::UdsPublisher<std_msgs::msg::ColorRGBA> publisher(path);
+  for (size_t i = 0; i < message_count; ++i) {
+    std_msgs::msg::ColorRGBA msg;
+    msg.r = static_cast<float>(i);
+    msg.g = 0.25f;
+    msg.b = -1.5f;
+    msg.a = 1.0f;
+    ASSERT_TRUE(publisher.publish(msg));
+  }
+
+  std::unique_lock<std::mutex> lock(mutex);
+  ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return received.size() == message_count; }));
+  for (size_t i = 0; i < message_count; ++i) {
+    EXPECT_EQ(received[i].r, static_cast<float>(i));
+    EXPECT_EQ(received[i].g, 0.25f);
+    EXPECT_EQ(received[i].b, -1.5f);
+    EXPECT_EQ(received[i].a, 1.0f);
   }
 }
 
