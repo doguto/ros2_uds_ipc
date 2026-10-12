@@ -2,6 +2,7 @@
 #define ROS2_UDS_IPC__DETAIL__UDS_SOCKET_HPP_
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -16,7 +17,8 @@ namespace detail
   class UdsClientSocket
   {
   public:
-    explicit UdsClientSocket(std::string path);
+    // send_buffer_bytes: SO_SNDBUF of the socket. 0 keeps the system default.
+    explicit UdsClientSocket(std::string path, size_t send_buffer_bytes = 0);
     ~UdsClientSocket();
 
     UdsClientSocket(const UdsClientSocket &) = delete;
@@ -26,11 +28,13 @@ namespace detail
 
     bool try_connect();
 
-    /// Non-blocking. Closes the socket on failure.
-    bool send(const uint8_t * data, size_t length);
+    /// While the peer's receive queue is full, waits for room for up to timeout (zero: does not wait),
+    /// then returns false and keeps the connection. Any other failure closes the socket.
+    bool send(const uint8_t * data, size_t length, std::chrono::nanoseconds timeout);
 
   private:
     std::string path_;
+    size_t send_buffer_bytes_;
     int fd_ = -1;
   };
 

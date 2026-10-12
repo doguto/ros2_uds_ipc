@@ -52,10 +52,12 @@ namespace latency_benchmark
   constexpr auto kStartTimeout = std::chrono::seconds(10);
   constexpr auto kIdleTimeout = std::chrono::seconds(10);
   constexpr char kTopic[] = "uds_ipc_benchmark/latency";
+  // uds_reliable: how long publish() may wait for the subscriber instead of dropping the message.
+  constexpr auto kReliableSendTimeout = std::chrono::seconds(1);
 
   struct Options
   {
-    std::string transport;  // "uds" or "dds"
+    std::string transport;  // "uds", "uds_reliable" or "dds"
     std::string socket_path;
     size_t payload_bytes;
     size_t count;
@@ -72,8 +74,8 @@ namespace latency_benchmark
     const int64_t count = node.declare_parameter<int64_t>("count", 10000);
     options.rate_hz = node.declare_parameter<double>("rate_hz", 1000.0);
 
-    if (options.transport != "uds" && options.transport != "dds") {
-      throw std::invalid_argument("transport must be 'uds' or 'dds'");
+    if (options.transport != "uds" && options.transport != "uds_reliable" && options.transport != "dds") {
+      throw std::invalid_argument("transport must be 'uds', 'uds_reliable' or 'dds'");
     }
     if (payload_bytes < static_cast<int64_t>(sizeof(int64_t)) || count <= 0 || options.rate_hz < 0.0) {
       throw std::invalid_argument("payload_bytes must be >= 8, count > 0 and rate_hz >= 0");

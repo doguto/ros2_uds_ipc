@@ -17,8 +17,11 @@ DDS には discovery、QoS マッチング、RTPS プロトコル層が付いて
   可変長メッセージも扱えます。
 - **到達保証・境界保持** — `SOCK_SEQPACKET` は接続指向でデータグラム境界を保持します
   (1 回の `send` = 1 回の `recv`)。手動のフレーミングは不要で、ベストエフォートではありません。
-- **送信側をブロックしない** — `publish()` はノンブロッキングで、未接続または送信失敗のときは `false` を
-  返します。ログ出力やフォールバックは呼び出し側が判断します。
+- **デフォルトでは送信側をブロックしない** — `publish()` はノンブロッキングで、未接続または subscriber の
+  受信キューが満杯のときは `false` を返します。メッセージが黙って捨てられることはありません。
+  ログ出力やフォールバックは呼び出し側が判断します。
+- **バックプレッシャー (任意)** — `publish(msg, timeout)` は、遅い subscriber を最大 `timeout` まで待ち、
+  メッセージを捨てずに送ります。
 - **自動再接続** — どちら側も再起動できます。publisher は次の `publish()` で再接続します。
 - **メッセージごとのヒープ確保なし** — ホットパスではバッファを使い回します。
 - **DDS へのミラー (任意)** — UDS の経路は `ros2 topic echo` や rosbag から見えないため、同じ CDR
@@ -85,8 +88,20 @@ uds_ipc::UdsPublisher<sensor_msgs::msg::JointState> publisher("/run/my_robot/joi
 
 sensor_msgs::msg::JointState msg;
 if (!publisher.publish(msg)) {
-  // 未接続 (subscriber がまだ起動していない等) か, 送信に失敗した.
+  // 未接続 (subscriber がまだ起動していない等) か, subscriber の受信キューが満杯.
 }
+
+// 遅い subscriber を最大 10 ms 待ち, メッセージを捨てずに送る.
+publisher.publish(msg, std::chrono::milliseconds(10));
+```
+
+subscriber 待ちで溜められるメッセージ量は、ソケットの送信バッファで決まります。コンストラクタの第 3 引数で
+バイト数を指定できます (`SO_SNDBUF`。0 はシステムのデフォルト)。カーネルが `net.core.wmem_max` に丸めるので、
+それを超える値にするには sysctl 側も上げてください。
+
+```cpp
+uds_ipc::UdsPublisher<sensor_msgs::msg::JointState> publisher(
+  "/run/my_robot/joint_command.sock", nullptr, 1024 * 1024);
 ```
 
 ### DDS へのミラー

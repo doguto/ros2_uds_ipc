@@ -17,8 +17,11 @@ gateway), that machinery is latency you do not need.
   Variable-length messages work.
 - **Reliable, boundary-preserving** — `SOCK_SEQPACKET` is connection-oriented and keeps datagram
   boundaries (one `send` = one `recv`), so there is no manual framing and delivery is not best-effort.
-- **Never blocks the sender** — `publish()` is non-blocking and returns `false` when the peer is not
-  connected or sending fails. The caller decides whether to log or fall back.
+- **Never blocks the sender by default** — `publish()` is non-blocking and returns `false` when the peer is
+  not connected or its receive queue is full, so a message is never dropped silently. The caller decides
+  whether to log or fall back.
+- **Optional back-pressure** — `publish(msg, timeout)` waits for a slow subscriber for up to `timeout`
+  instead of dropping the message.
 - **Automatic reconnection** — either side can be restarted; the publisher reconnects on the next
   `publish()`.
 - **No per-message heap allocation** on the hot path (buffers are reused).
@@ -87,8 +90,20 @@ uds_ipc::UdsPublisher<sensor_msgs::msg::JointState> publisher("/run/my_robot/joi
 
 sensor_msgs::msg::JointState msg;
 if (!publisher.publish(msg)) {
-  // Not connected (e.g. the subscriber has not started yet) or sending failed.
+  // Not connected (e.g. the subscriber has not started yet) or the subscriber's queue is full.
 }
+
+// Wait for up to 10 ms for a slow subscriber instead of dropping the message.
+publisher.publish(msg, std::chrono::milliseconds(10));
+```
+
+How many messages may wait for the subscriber is bounded by the socket send buffer. The third constructor
+argument sets it in bytes (`SO_SNDBUF`; 0 keeps the system default). The kernel clamps it to
+`net.core.wmem_max`, so raise that sysctl to go beyond it.
+
+```cpp
+uds_ipc::UdsPublisher<sensor_msgs::msg::JointState> publisher(
+  "/run/my_robot/joint_command.sock", nullptr, 1024 * 1024);
 ```
 
 ### Mirroring to DDS

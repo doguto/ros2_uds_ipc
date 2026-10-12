@@ -42,9 +42,11 @@ run() {  # run LOAD TRANSPORT RATE SIZE
 }
 
 for load in $LOADS; do
-  for rate in $RATES; do
-    for size in $SIZES; do
-      run "$load" uds "$rate" "$size"
+  for transport in uds uds_reliable; do
+    for rate in $RATES; do
+      for size in $SIZES; do
+        run "$load" "$transport" "$rate" "$size"
+      done
     done
   done
   for rmw in $RMWS; do

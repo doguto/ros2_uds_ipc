@@ -192,7 +192,7 @@ namespace
     const auto callback = [&recorder](const Message & msg) { recorder.on_message(msg); };
 
     bool completed = false;
-    if (options.transport == "uds") {
+    if (options.transport != "dds") {
       // Headroom for the CDR header and the MultiArray layout.
       uds_ipc::UdsSubscriber<Message> subscriber(options.socket_path, callback, options.payload_bytes + 1024);
       completed = recorder.wait_done();

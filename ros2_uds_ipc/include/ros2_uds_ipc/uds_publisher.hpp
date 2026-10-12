@@ -1,6 +1,8 @@
 #ifndef ROS2_UDS_IPC__UDS_PUBLISHER_HPP_
 #define ROS2_UDS_IPC__UDS_PUBLISHER_HPP_
 
+#include <chrono>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
@@ -20,16 +22,22 @@ namespace uds_ipc
   {
   public:
     // mirror: a publisher from create_uds_mirror(). If set, sent messages are also forwarded to DDS.
-    explicit UdsPublisher(std::string path, rclcpp::GenericPublisher::SharedPtr mirror = nullptr)
-    : socket_(std::move(path)),
+    // send_buffer_bytes: how many bytes of messages may wait for the subscriber (SO_SNDBUF) before publish()
+    // fails or waits. 0 keeps the system default; the kernel clamps the value to net.core.wmem_max.
+    explicit UdsPublisher(
+      std::string path, rclcpp::GenericPublisher::SharedPtr mirror = nullptr, size_t send_buffer_bytes = 0)
+    : socket_(std::move(path), send_buffer_bytes),
       mirror_(mirror ? std::make_unique<UdsMirrorWorker>(std::move(mirror)) : nullptr)
     {}
 
     UdsPublisher(const UdsPublisher &) = delete;
     UdsPublisher & operator=(const UdsPublisher &) = delete;
 
-    /// Never blocks. Returns false if not connected or if sending failed.
-    bool publish(const MessageT & msg)
+    /// Returns false if not connected or if sending failed.
+    /// send_timeout: how long to wait while the subscriber's receive queue is full. With the default (zero)
+    /// publish() never blocks and the message is dropped instead; a message is never dropped silently.
+    bool publish(
+      const MessageT & msg, std::chrono::nanoseconds send_timeout = std::chrono::nanoseconds::zero())
     {
       const bool mirroring = mirror_ && mirror_->has_subscribers();
       if (!socket_.is_connected() && !socket_.try_connect() && !mirroring) {
@@ -39,7 +47,7 @@ namespace uds_ipc
       serializer_.serialize_message(&msg, &serialized_);
       const auto & rcl_msg = serialized_.get_rcl_serialized_message();
 
-      const bool sent = socket_.is_connected() && socket_.send(rcl_msg.buffer, rcl_msg.buffer_length);
+      const bool sent = socket_.is_connected() && socket_.send(rcl_msg.buffer, rcl_msg.buffer_length, send_timeout);
       if (mirroring) {
         mirror_->enqueue(rcl_msg.buffer, rcl_msg.buffer_length);
       }

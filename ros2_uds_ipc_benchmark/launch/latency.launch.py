@@ -15,8 +15,9 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     arguments = [
-        DeclareLaunchArgument('transport', default_value='uds', choices=['uds', 'dds'],
-                              description='Transport to measure'),
+        DeclareLaunchArgument('transport', default_value='uds', choices=['uds', 'uds_reliable', 'dds'],
+                              description='Transport to measure. uds_reliable: publish() waits for the '
+                                          'subscriber instead of dropping when its queue is full'),
         DeclareLaunchArgument('payload_bytes', default_value='64',
                               description='Payload size in bytes (at least 8)'),
         DeclareLaunchArgument('count', default_value='10000',
@@ -24,7 +25,7 @@ def generate_launch_description():
         DeclareLaunchArgument('rate_hz', default_value='1000.0',
                               description='Publish rate in Hz, 0 for no throttling'),
         DeclareLaunchArgument('socket_path', default_value='/tmp/uds_ipc_benchmark/latency.sock',
-                              description='UDS socket path (uds transport only)'),
+                              description='UDS socket path (uds transports only)'),
         DeclareLaunchArgument('load_threads', default_value='0',
                               description='Number of busy-loop threads to run alongside (0: no load)'),
         DeclareLaunchArgument('publisher_delay', default_value='2.0',

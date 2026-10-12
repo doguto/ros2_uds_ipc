@@ -94,9 +94,11 @@ namespace
     const Options options = declare_options(*node);
 
     const int64_t created_ns = now_ns();
-    if (options.transport == "uds") {
+    if (options.transport != "dds") {
+      const std::chrono::nanoseconds send_timeout =
+        options.transport == "uds_reliable" ? kReliableSendTimeout : std::chrono::seconds(0);
       uds_ipc::UdsPublisher<Message> publisher(options.socket_path);
-      const auto publish = [&publisher](const Message & msg) { return publisher.publish(msg); };
+      const auto publish = [&](const Message & msg) { return publisher.publish(msg, send_timeout); };
       // publish() connects lazily and fails until the subscriber is listening.
       return publish_all(*node, options, created_ns, publish, publish);
     }
