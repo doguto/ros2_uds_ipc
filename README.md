@@ -108,6 +108,26 @@ uds_ipc::UdsPublisher<sensor_msgs::msg::JointState> publisher("/run/my_robot/joi
 
 Not measured yet.
 
+The measurement tools live in a separate package, `ros2_uds_ipc_benchmark`, so that nothing from them
+is built into `ros2_uds_ipc`. It measures cross-process latency of UDS and of plain DDS pub / sub
+under the same conditions, together with the CPU usage and peak memory of the publisher and subscriber
+processes, the number of failed publishes and the time to connect, and writes the result as CSV. It can also run under CPU load (`load_threads`).
+
+```bash
+colcon build --packages-up-to ros2_uds_ipc_benchmark
+source install/setup.bash
+
+# A single condition
+ros2 launch ros2_uds_ipc_benchmark latency.launch.py transport:=uds payload_bytes:=1024 count:=10000 rate_hz:=1000.0
+
+# Same, with 8 busy-loop threads competing for the CPU
+ros2 launch ros2_uds_ipc_benchmark latency.launch.py transport:=uds payload_bytes:=1024 load_threads:=8
+
+# CPU load x transport x publish rate x payload size (override with LOADS / RATES / SIZES / COUNT / RMWS).
+# dds is measured once per installed RMW implementation.
+ros2 run ros2_uds_ipc_benchmark run_latency_matrix.sh result.csv
+```
+
 ## Tech Stack
 
 - C++17, `rclcpp` (CDR serialization, `GenericPublisher` for the mirror)

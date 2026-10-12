@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ros2_uds_ipc_benchmark</name>
+  <version>0.1.0</version>
+  <description>
+    Benchmarks for ros2_uds_ipc. Measures cross-process latency of UdsPublisher / UdsSubscriber
+    and of a plain rclcpp (DDS) publisher / subscription under the same conditions.
+    Kept as a separate package so that nothing here ends up in the ros2_uds_ipc binaries.
+  </description>
+  <maintainer email="doguto110@gmail.com">kuto</maintainer>
+  <license>MIT</license>
+
+  <url type="repository">https://github.com/doguto/ros2_uds_ipc</url>
+  <url type="bugtracker">https://github.com/doguto/ros2_uds_ipc/issues</url>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>ros2_uds_ipc</depend>
+  <depend>std_msgs</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
