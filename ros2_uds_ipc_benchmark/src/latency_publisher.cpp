@@ -23,7 +23,12 @@ namespace
   /// `ready` must return true once the subscriber is reachable. `created_ns` is when the publisher was created.
   template <typename PublishT, typename ReadyT>
   int publish_all(
-    rclcpp::Node & node, const Options & options, int64_t created_ns, PublishT && publish, ReadyT && ready)
+    rclcpp::Node & node,
+    const Options & options,
+    int64_t created_ns,
+    PublishT && publish,
+    ReadyT && ready
+  )
   {
     EndMarker end_marker;
     Message msg;

@@ -21,7 +21,10 @@ namespace uds_ipc
   /// Creates the DDS publisher used to mirror UDS traffic (for `ros2 topic echo` / rosbag).
   template <typename MessageT>
   rclcpp::GenericPublisher::SharedPtr create_uds_mirror(
-    rclcpp::Node & node, const std::string & topic, const rclcpp::QoS & qos = rclcpp::SystemDefaultsQoS())
+    rclcpp::Node & node,
+    const std::string & topic,
+    const rclcpp::QoS & qos = rclcpp::SystemDefaultsQoS()
+  )
   {
     return node.create_generic_publisher(topic, rosidl_generator_traits::name<MessageT>(), qos);
   }
@@ -34,7 +37,8 @@ namespace uds_ipc
     // When more than max_queue messages are queued within one period, the oldest ones are dropped.
     explicit UdsMirrorWorker(
       rclcpp::GenericPublisher::SharedPtr publisher, size_t max_queue = 100,
-      std::chrono::milliseconds period = std::chrono::milliseconds(10));
+      std::chrono::milliseconds period = std::chrono::milliseconds(10)
+    );
 
     ~UdsMirrorWorker();
 

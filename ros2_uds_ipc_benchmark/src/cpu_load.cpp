@@ -24,8 +24,7 @@ int main(int argc, char ** argv)
     std::vector<std::thread> threads;
     for (int64_t i = 0; i < thread_count; ++i) {
       threads.emplace_back([&running] {
-        while (running.load(std::memory_order_relaxed)) {
-        }
+        while (running.load(std::memory_order_relaxed)) {}
       });
     }
 

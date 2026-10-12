@@ -25,7 +25,10 @@ namespace uds_ipc
     // send_buffer_bytes: how many bytes of messages may wait for the subscriber (SO_SNDBUF) before publish()
     // fails or waits. 0 keeps the system default; the kernel clamps the value to net.core.wmem_max.
     explicit UdsPublisher(
-      std::string path, rclcpp::GenericPublisher::SharedPtr mirror = nullptr, size_t send_buffer_bytes = 0)
+      std::string path,
+      rclcpp::GenericPublisher::SharedPtr mirror = nullptr,
+      size_t send_buffer_bytes = 0
+    )
     : socket_(std::move(path), send_buffer_bytes),
       mirror_(mirror ? std::make_unique<UdsMirrorWorker>(std::move(mirror)) : nullptr)
     {}
@@ -37,7 +40,9 @@ namespace uds_ipc
     /// send_timeout: how long to wait while the subscriber's receive queue is full. With the default (zero)
     /// publish() never blocks and the message is dropped instead; a message is never dropped silently.
     bool publish(
-      const MessageT & msg, std::chrono::nanoseconds send_timeout = std::chrono::nanoseconds::zero())
+      const MessageT & msg,
+      std::chrono::nanoseconds send_timeout = std::chrono::nanoseconds::zero()
+    )
     {
       const bool mirroring = mirror_ && mirror_->has_subscribers();
       if (!socket_.is_connected() && !socket_.try_connect() && !mirroring) {

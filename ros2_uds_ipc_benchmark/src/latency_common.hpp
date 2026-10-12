@@ -106,11 +106,11 @@ namespace latency_benchmark
     std::ifstream status("/proc/self/status");
     std::string key;
     while (status >> key) {
-      if (key == "VmHWM:") {
-        int64_t kb = 0;
-        status >> kb;
-        return kb;
-      }
+      if (key != "VmHWM:") continue;
+
+      int64_t kb = 0;
+      status >> kb;
+      return kb;
     }
     return 0;
   }

@@ -35,14 +35,11 @@ namespace
     void on_message(const Message & msg)
     {
       const int64_t received_ns = now_ns();
-      if (msg.data.size() < sizeof(int64_t)) {
-        return;
-      }
+      if (msg.data.size() < sizeof(int64_t)) return;
+
       int64_t stamp;
       std::memcpy(&stamp, msg.data.data(), sizeof(stamp));
-      if (stamp == kWarmupStamp) {
-        return;
-      }
+      if (stamp == kWarmupStamp) return;
 
       std::lock_guard<std::mutex> lock(mutex_);
       if (stamp == kEndStamp) {
@@ -106,8 +103,14 @@ namespace
   };
 
   void report(
-    rclcpp::Node & node, const Options & options, const std::string & output_file, int64_t load_threads,
-    const std::vector<int64_t> & sorted_ns, const EndMarker & publisher, const CpuWindow & subscriber_cpu)
+    rclcpp::Node & node,
+    const Options & options,
+    const std::string & output_file,
+    int64_t load_threads,
+    const std::vector<int64_t> & sorted_ns,
+    const EndMarker & publisher,
+    const CpuWindow & subscriber_cpu
+  )
   {
     if (sorted_ns.empty()) {
       RCLCPP_ERROR(node.get_logger(), "No measured message was received.");
@@ -146,17 +149,19 @@ namespace
       "transport=%s payload_bytes=%zu rate_hz=%g load_threads=%ld received=%zu/%zu latency_us: min=%.3f mean=%.3f "
       "p50=%.3f p99=%.3f p99.9=%.3f max=%.3f",
       options.transport.c_str(), options.payload_bytes, options.rate_hz, static_cast<long>(load_threads),
-      sorted_ns.size(), options.count, min_us, mean_us, p50_us, p99_us, p999_us, max_us);
+      sorted_ns.size(), options.count, min_us, mean_us, p50_us, p99_us, p999_us, max_us
+    );
     RCLCPP_INFO(
       node.get_logger(), "cpu: publisher=%.2f%% (%.3f us/msg) subscriber=%.2f%% (%.3f us/msg)", pub_cpu_percent,
-      pub_cpu_us_per_msg, sub_cpu_percent, sub_cpu_us_per_msg);
+      pub_cpu_us_per_msg, sub_cpu_percent, sub_cpu_us_per_msg
+    );
     RCLCPP_INFO(
       node.get_logger(), "publish_failed=%ld throughput_hz=%.1f connect_ms=%.3f max_rss_kb: publisher=%ld subscriber=%ld",
-      publish_failed, throughput_hz, connect_ms, pub_max_rss_kb, sub_max_rss_kb);
+      publish_failed, throughput_hz, connect_ms, pub_max_rss_kb, sub_max_rss_kb
+    );
 
-    if (output_file.empty()) {
-      return;
-    }
+    if (output_file.empty()) return;
+
     std::error_code ec;
     const bool write_header = !std::filesystem::exists(output_file, ec) || std::filesystem::file_size(output_file, ec) == 0;
     std::FILE * file = std::fopen(output_file.c_str(), "a");
@@ -169,7 +174,8 @@ namespace
         file,
         "transport,rmw,payload_bytes,rate_hz,load_threads,count,publish_failed,received,min_us,mean_us,p50_us,p99_us,"
         "p999_us,max_us,pub_cpu_percent,pub_cpu_us_per_msg,sub_cpu_percent,sub_cpu_us_per_msg,connect_ms,"
-        "pub_max_rss_kb,sub_max_rss_kb,throughput_hz\n");
+        "pub_max_rss_kb,sub_max_rss_kb,throughput_hz\n"
+      );
     }
     // The RMW implementation only matters for the dds rows.
     std::fprintf(
@@ -177,7 +183,8 @@ namespace
       options.transport.c_str(), options.transport == "dds" ? rmw_get_implementation_identifier() : "",
       options.payload_bytes, options.rate_hz, static_cast<long>(load_threads), options.count, publish_failed,
       sorted_ns.size(), min_us, mean_us, p50_us, p99_us, p999_us, max_us, pub_cpu_percent, pub_cpu_us_per_msg,
-      sub_cpu_percent, sub_cpu_us_per_msg, connect_ms, pub_max_rss_kb, sub_max_rss_kb, throughput_hz);
+      sub_cpu_percent, sub_cpu_us_per_msg, connect_ms, pub_max_rss_kb, sub_max_rss_kb, throughput_hz
+    );
     std::fclose(file);
   }
 
@@ -211,7 +218,8 @@ namespace
     }
     report(
       *node, options, output_file, load_threads, recorder.take_sorted(), recorder.publisher(),
-      recorder.subscriber_cpu());
+      recorder.subscriber_cpu()
+    );
     return completed ? 0 : 1;
   }
 }  // namespace

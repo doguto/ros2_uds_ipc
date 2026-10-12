@@ -29,14 +29,16 @@ namespace uds_ipc
     // Throws std::runtime_error if the socket cannot be set up.
     UdsSubscriber(
       std::string path, Callback callback, size_t max_message_size = 65536,
-      rclcpp::GenericPublisher::SharedPtr mirror = nullptr)
+      rclcpp::GenericPublisher::SharedPtr mirror = nullptr
+    )
     : callback_(std::move(callback)),
       mirror_(mirror ? std::make_unique<UdsMirrorWorker>(std::move(mirror)) : nullptr),
       serialized_(max_message_size),
       socket_(
         std::move(path), serialized_.get_rcl_serialized_message().buffer,
         serialized_.get_rcl_serialized_message().buffer_capacity,
-        [this](size_t length) { on_receive(length); })
+        [this](size_t length) { on_receive(length); }
+      )
     {}
 
     UdsSubscriber(const UdsSubscriber &) = delete;

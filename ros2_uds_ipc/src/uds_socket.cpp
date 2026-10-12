@@ -29,9 +29,8 @@ namespace detail
   bool UdsClientSocket::try_connect()
   {
     const int fd = ::socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0);
-    if (fd < 0) {
-      return false;
-    }
+    if (fd < 0) return false;
+
     if (send_buffer_bytes_ > 0) {
       // On AF_UNIX the messages waiting in the peer's receive queue are charged to the sender's buffer,
       // so this is what bounds the queue. Best effort: the kernel clamps it to net.core.wmem_max.
@@ -55,12 +54,9 @@ namespace detail
     bool waiting = false;
     while (true) {
       const ssize_t sent = ::send(fd_, data, length, MSG_DONTWAIT | MSG_NOSIGNAL);
-      if (sent == static_cast<ssize_t>(length)) {
-        return true;
-      }
-      if (sent < 0 && errno == EINTR) {
-        continue;
-      }
+      if (sent == static_cast<ssize_t>(length)) return true;
+      if (sent < 0 && errno == EINTR) continue;
+
       if (sent >= 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
         break;  // Disconnected, or the message can never be sent (e.g. larger than the send buffer).
       }
@@ -71,9 +67,8 @@ namespace detail
         deadline = now + timeout;
         waiting = true;
       }
-      if (now >= deadline) {
-        return false;
-      }
+      if (now >= deadline) return false;
+
       const auto remaining = deadline - now;
       timespec ts{};
       ts.tv_sec = std::chrono::duration_cast<std::chrono::seconds>(remaining).count();
@@ -140,14 +135,11 @@ namespace detail
     while (running_) {
       pollfd pfd{listen_fd_, POLLIN, 0};
       const int ready = ::poll(&pfd, 1, 200 /* ms */);
-      if (ready <= 0) {
-        continue;
-      }
+      if (ready <= 0) continue;
 
       const int client_fd = ::accept(listen_fd_, nullptr, nullptr);
-      if (client_fd < 0) {
-        continue;
-      }
+      if (client_fd < 0) continue;
+
       client_fd_ = client_fd;
       recv_loop(client_fd);
       client_fd_ = -1;
@@ -160,14 +152,11 @@ namespace detail
     while (running_) {
       pollfd pfd{client_fd, POLLIN, 0};
       const int ready = ::poll(&pfd, 1, 200 /* ms */);
-      if (ready <= 0) {
-        continue;
-      }
+      if (ready <= 0) continue;
 
       const ssize_t received = ::recv(client_fd, buffer_, capacity_, 0);
-      if (received <= 0) {
-        return;  // Disconnected.
-      }
+      if (received <= 0) return;  // Disconnected.
+
       on_receive_(static_cast<size_t>(received));
     }
   }
