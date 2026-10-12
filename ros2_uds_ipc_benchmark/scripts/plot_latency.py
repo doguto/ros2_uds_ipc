@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """Render the CSV written by run_latency_matrix.sh into SVG charts (a light and a dark variant each).
 
-Usage: ros2 run ros2_uds_ipc_benchmark plot_latency.py RESULT_CSV OUTPUT_DIR
+A condition that was measured more than once is plotted as the median of its runs.
+
+Usage: ros2 run ros2_uds_ipc_benchmark plot_latency.py RESULT_CSV OUTPUT_DIR [--exclude SERIES ...]
 """
 
+import argparse
 import csv
-import sys
+import statistics
 from pathlib import Path
 
 import matplotlib
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
-from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator  # noqa: E402
+from matplotlib.ticker import FuncFormatter  # noqa: E402
 
 # Series in a fixed order, so that a series keeps its color whichever other series are present.
 SERIES = [
@@ -41,7 +43,6 @@ THEMES = {
 
 LATENCY_RATE = 1000.0
 CPU_RATE = 10000.0
-UNLIMITED_RATE = 0.0
 
 
 def load_rows(path):
@@ -55,7 +56,16 @@ def load_rows(path):
                 if key not in ('transport', 'rmw', 'series'):
                     row[key] = float(value)
             rows.append(row)
-    return rows
+
+    # Collapse repeated runs of a condition into their median.
+    runs = {}
+    for row in rows:
+        key = (row['series'], row['payload_bytes'], row['rate_hz'], row['load_threads'])
+        runs.setdefault(key, []).append(row)
+    return [
+        {name: value if isinstance(value, str) else statistics.median(r[name] for r in group)
+         for name, value in group[0].items()}
+        for group in runs.values()]
 
 
 def compact(value, _position=None):
@@ -119,88 +129,39 @@ def series_present(rows):
     return [(index, key, label) for index, (key, label) in enumerate(SERIES) if key in present]
 
 
-def select(rows, series, load, rate):
-    selected = [r for r in rows if r['series'] == series and r['load_threads'] == load and r['rate_hz'] == rate]
-    return sorted(selected, key=lambda r: r['payload_bytes'])
-
-
 def set_size_axis(axes, sizes):
     axes.set_xticks(range(len(sizes)))
     axes.set_xticklabels([size_label(size) for size in sizes])
 
 
-def plot_latency(rows, theme, loads, path):
-    rows = [r for r in rows if r['rate_hz'] == LATENCY_RATE]
-    if not rows:
+def plot_grouped_bars(theme, grid, title, subtitle, path):
+    """grid: rows of panels, each panel being (panel title, y label, rows, value function)."""
+    all_rows = [r for row in grid for _name, _label, panel_rows, _value in row for r in panel_rows]
+    if not all_rows:
         return False
-    sizes = sorted({r['payload_bytes'] for r in rows})
-    series = series_present(rows)
-    figure = Figure(
-        theme, 'Cross-process latency at 1 kHz',
-        'Publish to subscriber callback, by payload size. Lower is better.', 2, len(loads), 5.9)
-
-    for row_index, (column, name, log_scale) in enumerate((('p50_us', 'Median', False), ('p99_us', 'p99', True))):
-        values = [r[column] for r in rows]
-        for column_index, load in enumerate(loads):
-            axes = figure.axes[row_index][column_index]
-            for index, key, _label in series:
-                points = select(rows, key, load, LATENCY_RATE)
-                axes.plot(
-                    [sizes.index(p['payload_bytes']) for p in points], [p[column] for p in points],
-                    color=theme['series'][index], linewidth=2, marker='o', markersize=8,
-                    markeredgecolor=theme['surface'], markeredgewidth=2, solid_capstyle='round',
-                    solid_joinstyle='round', clip_on=False, zorder=3)
-            set_size_axis(axes, sizes)
-            figure.panel_title(axes, f'{name} — {load_label(load)}')
-            if log_scale:
-                axes.set_yscale('log')
-                ticks = [t for t in (100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000)
-                         if min(values) / 2.5 < t < max(values) * 2.5]
-                axes.yaxis.set_major_locator(FixedLocator(ticks))
-                axes.yaxis.set_minor_locator(NullLocator())
-                axes.set_ylim(ticks[0] * 0.8, ticks[-1] * 1.1)
-            else:
-                axes.set_ylim(0, max(values) * 1.1)
-            axes.yaxis.set_major_formatter(FuncFormatter(compact))
-            figure.labels(
-                axes, x_label='Payload (bytes)' if row_index == 1 else None,
-                y_label=f'{name} latency (µs{", log scale" if log_scale else ""})' if column_index == 0 else None)
-
-    figure.legend([
-        Line2D([], [], color=theme['series'][index], linewidth=2, marker='o', markersize=8,
-               markeredgecolor=theme['surface'], markeredgewidth=2, label=label)
-        for index, _key, label in series])
-    figure.save(path)
-    return True
-
-
-def plot_grouped_bars(rows, theme, panels, value, title, subtitle, y_label, path):
-    """panels: list of (panel title, rows of that panel)."""
-    panels = [(name, panel_rows) for name, panel_rows in panels if panel_rows]
-    if not panels:
-        return False
-    all_rows = [r for _name, panel_rows in panels for r in panel_rows]
     sizes = sorted({r['payload_bytes'] for r in all_rows})
     series = series_present(all_rows)
-    figure = Figure(theme, title, subtitle, 1, len(panels), 3.7)
+    figure = Figure(theme, title, subtitle, len(grid), len(grid[0]), 1.3 + 2.4 * len(grid))
 
     # Bars stay thin and sit next to each other; a surface-colored edge leaves a gap between neighbors.
     slot = min(0.78 / len(series), 0.22)
-    bar_width = slot
-    top = max(value(r) for r in all_rows) * 1.1
-    for column_index, (name, panel_rows) in enumerate(panels):
-        axes = figure.axes[0][column_index]
-        for position, (index, key, _label) in enumerate(series):
-            points = sorted((r for r in panel_rows if r['series'] == key), key=lambda r: r['payload_bytes'])
-            offset = (position - (len(series) - 1) / 2) * slot
-            axes.bar(
-                [sizes.index(p['payload_bytes']) + offset for p in points], [value(p) for p in points],
-                width=bar_width, color=theme['series'][index], edgecolor=theme['surface'], linewidth=2, zorder=3)
-        set_size_axis(axes, sizes)
-        axes.set_ylim(0, top)
-        axes.yaxis.set_major_formatter(FuncFormatter(compact))
-        figure.panel_title(axes, name)
-        figure.labels(axes, x_label='Payload (bytes)', y_label=y_label if column_index == 0 else None)
+    for row_index, row in enumerate(grid):
+        for column_index, (name, y_label, panel_rows, value) in enumerate(row):
+            axes = figure.axes[row_index][column_index]
+            for position, (index, key, _label) in enumerate(series):
+                points = sorted((r for r in panel_rows if r['series'] == key), key=lambda r: r['payload_bytes'])
+                offset = (position - (len(series) - 1) / 2) * slot
+                axes.bar(
+                    [sizes.index(p['payload_bytes']) + offset for p in points], [value(p) for p in points],
+                    width=slot, color=theme['series'][index], edgecolor=theme['surface'], linewidth=2, zorder=3)
+            set_size_axis(axes, sizes)
+            # Each panel has its own scale: the ranges differ by an order of magnitude between panels.
+            axes.set_ylim(0, max((value(r) for r in panel_rows), default=1.0) * 1.1)
+            axes.yaxis.set_major_formatter(FuncFormatter(compact))
+            figure.panel_title(axes, name)
+            figure.labels(
+                axes, x_label='Payload (bytes)' if row_index == len(grid) - 1 else None,
+                y_label=y_label if column_index == 0 else None)
 
     figure.legend([Patch(facecolor=theme['series'][index], label=label) for index, _key, label in series])
     figure.save(path)
@@ -208,34 +169,41 @@ def plot_grouped_bars(rows, theme, panels, value, title, subtitle, y_label, path
 
 
 def main():
-    if len(sys.argv) != 3:
-        sys.exit(__doc__)
-    rows = load_rows(sys.argv[1])
-    output_dir = Path(sys.argv[2])
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('result_csv')
+    parser.add_argument('output_dir')
+    parser.add_argument(
+        '--exclude', nargs='+', default=[], metavar='SERIES',
+        help='series to leave out: uds, uds_reliable, or an RMW implementation name')
+    args = parser.parse_args()
+    rows = [r for r in load_rows(args.result_csv) if r['series'] not in args.exclude]
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     plt.rcParams['font.family'] = 'sans-serif'
     loads = sorted({r['load_threads'] for r in rows})
     loads = loads if len(loads) <= 2 else [loads[0], loads[-1]]
 
-    # The non-blocking UDS publisher drops messages at an unlimited rate, so its throughput is not comparable.
-    lossless = [r for r in rows if r['rate_hz'] == UNLIMITED_RATE and r['publish_failed'] == 0]
+    latency = [r for r in rows if r['rate_hz'] == LATENCY_RATE]
     cpu = [r for r in rows if r['rate_hz'] == CPU_RATE and r['load_threads'] == loads[0]]
 
     for mode, theme in THEMES.items():
         suffix = '' if mode == 'light' else '-dark'
         written = [
-            plot_latency(rows, theme, loads, output_dir / f'latency_1khz{suffix}.svg'),
             plot_grouped_bars(
-                rows, theme, [(load_label(load), [r for r in lossless if r['load_threads'] == load]) for load in loads],
-                lambda r: r['throughput_hz'], 'Throughput without loss',
-                'Messages received per second when publishing as fast as possible. Higher is better.',
-                'Messages per second', output_dir / f'throughput{suffix}.svg'),
+                theme,
+                [[(f'{name} — {load_label(load)}', f'{name} latency (µs)',
+                   [r for r in latency if r['load_threads'] == load], lambda r, column=column: r[column])
+                  for load in loads]
+                 for column, name in (('p50_us', 'Median'), ('p99_us', 'p99'))],
+                'Cross-process latency at 1 kHz', 'Publish to subscriber callback, by payload size. Lower is better.',
+                output_dir / f'latency_1khz{suffix}.svg'),
             plot_grouped_bars(
-                rows, theme, [(load_label(loads[0]), cpu)],
-                lambda r: r['pub_cpu_us_per_msg'] + r['sub_cpu_us_per_msg'], 'CPU time per message at 10 kHz',
-                'Publisher and subscriber processes combined. Lower is better.',
-                'CPU time per message (µs)', output_dir / f'cpu_per_message{suffix}.svg'),
+                theme,
+                [[(load_label(loads[0]), 'CPU time per message (µs)', cpu,
+                   lambda r: r['pub_cpu_us_per_msg'] + r['sub_cpu_us_per_msg'])]],
+                'CPU time per message at 10 kHz', 'Publisher and subscriber processes combined. Lower is better.',
+                output_dir / f'cpu_per_message{suffix}.svg'),
         ]
         print(f'{mode}: wrote {sum(written)} charts to {output_dir}')
 

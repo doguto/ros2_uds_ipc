@@ -8,6 +8,7 @@
 #   RATES  Publish rates in Hz, 0 for no throttling
 #   COUNT  Number of measured messages per run (default: 10 s worth at the rate, at most 10000)
 #   LOADS  Numbers of busy-loop threads (default: idle and all cores)
+#   REPEAT How many times to run the whole matrix (default: 1). plot_latency.py takes the median per condition
 #   RMWS   RMW implementations to measure (default: every installed one out of KNOWN_RMWS)
 set -u
 
@@ -18,6 +19,7 @@ OUTPUT=$(realpath -m "${1:-latency_result.csv}")
 SIZES=${SIZES:-"64 256 1024 4096 16384 65536"}
 RATES=${RATES:-"100 1000 10000 0"}
 LOADS=${LOADS:-"0 $(nproc)"}
+REPEAT=${REPEAT:-1}
 
 if [ -z "${RMWS:-}" ]; then
   RMWS=""
@@ -41,6 +43,7 @@ run() {  # run LOAD TRANSPORT RATE SIZE
   fi
 }
 
+for _ in $(seq "$REPEAT"); do
 for load in $LOADS; do
   for transport in uds uds_reliable; do
     for rate in $RATES; do
@@ -60,6 +63,7 @@ for load in $LOADS; do
       done
     done
   done
+done
 done
 
 echo "Results written to $OUTPUT" >&2
