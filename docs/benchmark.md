@@ -1,10 +1,58 @@
-# Benchmark details
+# Benchmark
 
-Results that do not fit in the [top-level README](../README.md#benchmark). The conditions are the same:
-a publisher node and a subscriber node in separate processes, 6 payload sizes x 4 publish rates
-(100 Hz, 1 kHz, 10 kHz, unlimited), idle and with 4 busy-loop threads competing for the CPU (one per hardware thread).
-Each condition was run 5 times and the tables show the median. The machine was an Intel Core i5-3427U (4 threads), Linux 7.0.0-31-generic, ROS 2 Jazzy,
-without CPU pinning or real-time scheduling.
+Latency, CPU usage, memory and time to connect of `ros2_uds_ipc` compared with DDS (Fast DDS / Cyclone DDS) and
+Zenoh, and how they were measured. Back to the [README](../README.md).
+
+## Summary
+
+Median latency in µs (p99 in parentheses) from `publish()` to the subscriber callback, for a 1 KB payload at 1 kHz between two processes.
+
+| Transport | Idle | 4 busy-loop threads |
+|---|---|---|
+| UDS (fixed-size) | 120 (179) | 11.8 (37.2) |
+| UDS (variable-size) | 182 (277) | 33.2 (585) |
+| DDS (Fast DDS) | 236 (467) | 251 (2737) |
+| DDS (Cyclone DDS) | 205 (408) | 141 (1413) |
+| Zenoh | 358 (500) | 921 (3746) |
+
+The idle numbers are dominated by the CPU waking up from a deep idle state, which no transport avoids; under load the middleware layers of DDS and Zenoh are what remains.
+
+Under load, the tail is a matter of scheduling rather than of the transport: every so often a thread on the
+receive path waits behind other work, and the largest latency of a run is 2 - 5 ms for all of them. A real-time
+priority removes it. With one (256 B at 1 kHz), the largest latency was:
+
+| Transport | Largest latency | What was made real-time |
+|---|---|---|
+| UDS (fixed-size) | 27 µs | The receive thread and the publishing thread |
+| UDS (variable-size) | 57 µs | The receive thread and the publishing thread |
+| DDS (Cyclone DDS) | 95 µs | The whole publisher and subscriber processes |
+| DDS (Fast DDS) | 115 µs | The whole publisher and subscriber processes |
+| Zenoh | 145 µs | The whole publisher and subscriber processes |
+
+UDS stays ahead by roughly 2x (variable-size) to 5x (fixed-size), and needs the priority on a single thread, which is a
+[constructor argument](../README.md#real-time-scheduling) ([details](#real-time-scheduling)).
+
+### Latency
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="benchmark/latency_1khz-dark.svg">
+  <img src="benchmark/latency_1khz.svg" alt="Median and p99 latency at 1 kHz by payload size, idle and under CPU load">
+</picture>
+
+### CPU usage
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="benchmark/cpu_per_message-dark.svg">
+  <img src="benchmark/cpu_per_message.svg" alt="CPU time per message at 10 kHz, publisher and subscriber combined">
+</picture>
+
+## Measurement setup
+
+Measured with the `ros2_uds_ipc_benchmark` package: a publisher node and a subscriber node in separate processes,
+6 payload sizes x 4 publish rates (100 Hz, 1 kHz, 10 kHz, unlimited), idle and with 4 busy-loop threads competing
+for the CPU (one per hardware thread). Each condition was run 5 times and the tables and charts show the median.
+The machine was an Intel Core i5-3427U (4 threads), Linux 7.0.0-31-generic, ROS 2 Jazzy, without CPU pinning or
+real-time scheduling (except in [Real-time scheduling](#real-time-scheduling)).
 
 | Series | Message | Serialization | When the receive queue is full |
 |---|---|---|---|
@@ -16,10 +64,9 @@ without CPU pinning or real-time scheduling.
 
 Both UDS series use a send timeout, so that a message is delivered or reported as failed, never dropped silently.
 The non-blocking `publish(msg)` (`transport:=uds`) is not part of the default matrix; it behaves the same below
-the rates where the queue fills up.
+the rates where the queue fills up. DDS and Zenoh use a plain `rclcpp` publisher / subscription with the default transport.
 
-Raw data: [`latency.csv`](benchmark/latency.csv) — all 1200 measurements (240 conditions x 5 runs). The tables on this page
-are the median of the 5 runs, which is also what the charts in the README show.
+Raw data: [`latency.csv`](benchmark/latency.csv) — all 1200 measurements (240 conditions x 5 runs).
 
 ## Notes
 
@@ -28,7 +75,7 @@ are the median of the 5 runs, which is also what the charts in the README show.
   1K). The gain shrinks as the payload grows (64K: 290 vs 570 µs at 100 Hz idle), and it applies only to messages
   made only of primitives and fixed-size arrays.
 - **Idle is slower than loaded for UDS** (330 µs vs 35 µs at 100 Hz). With nothing else running, the CPU sits in a deep
-  idle state between messages and waking it up dominates the latency (stage 3 in the README). Busy-loop threads keep
+  idle state between messages and waking it up dominates the latency. Busy-loop threads keep
   the cores awake.
 - **Under load, the difference between UDS and the middlewares is much larger** (3x to 30x at 1 kHz), since the DDS /
   Zenoh receive path needs several threads to be scheduled in turn.

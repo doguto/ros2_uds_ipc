@@ -1,9 +1,58 @@
-# Benchmark 詳細
+# Benchmark
 
-[トップの README](../README_ja.md#benchmark) に載せていない結果です。条件は同じで、publisher ノードと subscriber ノードを
-別プロセスで起動し、ペイロード 6 種 x 送信レート 4 種 (100 Hz / 1 kHz / 10 kHz / 無制限) を、無負荷と、busy loop
-スレッド 4 本 (ハードウェアスレッド数と同じ) と CPU を奪い合う状態の両方で測っています。各条件 5 回の実行の中央値を載せています。
-環境は Intel Core i5-3427U (4 スレッド), Linux 7.0.0-31-generic、ROS 2 Jazzy で、CPU 固定やリアルタイムスケジューリングは行っていません。
+`ros2_uds_ipc` と DDS (Fast DDS / Cyclone DDS)・Zenoh の、レイテンシ・CPU 使用量・メモリ・接続時間の比較と、その計測方法です。
+[README](../README_ja.md) に戻る。
+
+## 概要
+
+2 プロセス間、1 KB のペイロード、1 kHz での、`publish()` から subscriber のコールバックまでのレイテンシ中央値 (µs、括弧内は p99) です。
+
+| 方式 | 無負荷 | busy loop 4 本 |
+|---|---|---|
+| UDS (fixed-size) | 120 (179) | 11.8 (37.2) |
+| UDS (variable-size) | 182 (277) | 33.2 (585) |
+| DDS (Fast DDS) | 236 (467) | 251 (2737) |
+| DDS (Cyclone DDS) | 205 (408) | 141 (1413) |
+| Zenoh | 358 (500) | 921 (3746) |
+
+無負荷の数値は、CPU が深いアイドル状態から復帰する時間が支配的で、どの方式でも避けられません。負荷時には、DDS と Zenoh のミドルウェア層の分が差として残ります。
+
+負荷時の裾は、方式よりもスケジューリングの問題です。受信経路のスレッドがときどき他の処理の後ろで待たされるため、
+1 回の実行の最大レイテンシは、どの方式でも 2〜5 ms になります。リアルタイム優先度を付けると、これがなくなります。
+付けた場合 (256 B、1 kHz) の最大レイテンシは次のとおりです。
+
+| 方式 | 最大レイテンシ | リアルタイムにしたもの |
+|---|---|---|
+| UDS (fixed-size) | 27 µs | 受信スレッドと送信スレッド |
+| UDS (variable-size) | 57 µs | 受信スレッドと送信スレッド |
+| DDS (Cyclone DDS) | 95 µs | publisher と subscriber のプロセス全体 |
+| DDS (Fast DDS) | 115 µs | publisher と subscriber のプロセス全体 |
+| Zenoh | 145 µs | publisher と subscriber のプロセス全体 |
+
+UDS のほうが速いままで、差はおよそ 2 倍 (可変長) から 5 倍 (固定長) です。優先度を付けるスレッドも 1 本で済みます。指定は
+[コンストラクタの引数](../README_ja.md#リアルタイムスケジューリング)で行います ([詳細](#リアルタイムスケジューリング))。
+
+### レイテンシ
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="benchmark/latency_1khz-dark.svg">
+  <img src="benchmark/latency_1khz.svg" alt="1 kHz でのレイテンシ中央値と p99 (ペイロードサイズ別、無負荷 / CPU 負荷あり)">
+</picture>
+
+### CPU 使用量
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="benchmark/cpu_per_message-dark.svg">
+  <img src="benchmark/cpu_per_message.svg" alt="10 kHz での 1 メッセージあたり CPU 時間 (publisher と subscriber の合計)">
+</picture>
+
+## 計測方法
+
+`ros2_uds_ipc_benchmark` パッケージで計測しました。publisher ノードと subscriber ノードを別プロセスで起動し、
+ペイロード 6 種 x 送信レート 4 種 (100 Hz / 1 kHz / 10 kHz / 無制限) を、無負荷と、busy loop スレッド 4 本
+(ハードウェアスレッド数と同じ) と CPU を奪い合う状態の両方で測っています。表とグラフは各条件 5 回の実行の中央値です。
+環境は Intel Core i5-3427U (4 スレッド)、Linux 7.0.0-31-generic、ROS 2 Jazzy で、
+[リアルタイムスケジューリング](#リアルタイムスケジューリング)の節を除き、CPU 固定やリアルタイムスケジューリングは行っていません。
 
 | 系列 | メッセージ | シリアライズ | 受信キューが満杯のとき |
 |---|---|---|---|
@@ -15,9 +64,9 @@
 
 UDS はどちらも send timeout 付きで、メッセージは届くか、失敗として報告されるかのどちらかです。黙って捨てることはありません。
 ノンブロッキングの `publish(msg)` (`transport:=uds`) は既定の計測には含めていません。キューが満杯にならないレートでは同じ性能です。
+DDS と Zenoh は通常の `rclcpp` publisher / subscription で、トランスポートはデフォルトです。
 
-生データ: [`latency.csv`](benchmark/latency.csv) — 全 1200 件の計測 (240 条件 x 5 回)。このページの表と README のグラフは、
-5 回の中央値です。
+生データ: [`latency.csv`](benchmark/latency.csv) — 全 1200 件の計測 (240 条件 x 5 回)。
 
 ## 補足
 
@@ -26,7 +75,7 @@ UDS はどちらも send timeout 付きで、メッセージは届くか、失�
   ペイロードが大きくなると差の比率は縮みます (64K、100 Hz 無負荷で 290 µs 対 570 µs)。対象は、プリミティブと
   固定長配列だけで構成されたメッセージです。
 - **UDS は無負荷のほうが遅くなります** (100 Hz で 330 µs 対 35 µs)。ほかに何も動いていないと、メッセージの合間に CPU が
-  深いアイドル状態に入り、その復帰がレイテンシの大半を占めます (README のステージ 3)。busy loop がコアを起こし続けるため、
+  深いアイドル状態に入り、その復帰がレイテンシの大半を占めます。busy loop がコアを起こし続けるため、
   負荷ありのほうが速くなります。
 - **負荷時は、UDS とミドルウェアの差が大きく開きます** (1 kHz で 3〜30 倍)。DDS / Zenoh は受信経路で複数スレッドが順に
   スケジュールされる必要があるためです。

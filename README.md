@@ -5,105 +5,40 @@
 A thin C++ library for ROS 2 that publishes and subscribes `rclcpp` message types as-is over Unix domain
 sockets (`AF_UNIX` / `SOCK_SEQPACKET`), bypassing DDS.
 
-## Benchmark
-
-At a glance: median latency in µs (p99 in parentheses) from `publish()` to the subscriber callback, for a 1 KB payload at 1 kHz between two processes.
-
-| Transport | Idle | 4 busy-loop threads |
-|---|---|---|
-| UDS (fixed-size) | 120 (179) | 11.8 (37.2) |
-| UDS (variable-size) | 182 (277) | 33.2 (585) |
-| DDS (Fast DDS) | 236 (467) | 251 (2737) |
-| DDS (Cyclone DDS) | 205 (408) | 141 (1413) |
-| Zenoh | 358 (500) | 921 (3746) |
-
-The idle numbers are dominated by the CPU waking up from a deep idle state, which no transport avoids; under load the middleware layers of DDS and Zenoh are what remains.
-
-Under load, the tail is a matter of scheduling rather than of the transport: every so often a thread on the
-receive path waits behind other work, and the largest latency of a run is 2 - 5 ms for all of them. A real-time
-priority removes it. With one (256 B at 1 kHz), the largest latency was:
-
-| Transport | Largest latency | What was made real-time |
-|---|---|---|
-| UDS (fixed-size) | 27 µs | The receive thread and the publishing thread |
-| UDS (variable-size) | 57 µs | The receive thread and the publishing thread |
-| DDS (Cyclone DDS) | 95 µs | The whole publisher and subscriber processes |
-| DDS (Fast DDS) | 115 µs | The whole publisher and subscriber processes |
-| Zenoh | 145 µs | The whole publisher and subscriber processes |
-
-UDS stays ahead by roughly 2x (variable-size) to 5x (fixed-size), and needs the priority on a single thread, which is a
-[constructor argument](#real-time-scheduling) ([details](docs/benchmark.md#real-time-scheduling)).
-
-Measured with the `ros2_uds_ipc_benchmark` package: a publisher node and a subscriber node in separate
-processes, 6 payload sizes, idle and with 4 busy-loop threads competing for the CPU.
-
-- **UDS (variable-size)** — `publish(msg, 1s)` with `std_msgs/UInt8MultiArray`, serialized to CDR. It waits for the
-  subscriber instead of dropping a message when its queue is full.
-- **UDS (fixed-size)** — the same with a message made only of primitives and a fixed-size array, which is sent
-  without serialization.
-- **DDS (Fast DDS)** / **DDS (Cyclone DDS)** — a plain `rclcpp` publisher / subscription with `rmw_fastrtps_cpp` /
-  `rmw_cyclonedds_cpp`, reliable + keep-all, default transport
-- **Zenoh** — the same with `rmw_zenoh_cpp`, through a local `rmw_zenohd` router
-
-Environment: Intel Core i5-3427U (4 threads), Linux 7.0.0-31-generic, ROS 2 Jazzy.
-The charts show the median of 5 runs per condition, measured without CPU pinning or real-time scheduling.
-
-Other publish rates, message loss, time to connect, memory, the raw data and how to run the benchmark
-yourself are in [docs/benchmark.md](docs/benchmark.md).
-
-### Latency
-
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark/latency_1khz-dark.svg">
   <img src="docs/benchmark/latency_1khz.svg" alt="Median and p99 latency at 1 kHz by payload size, idle and under CPU load">
 </picture>
 
-### CPU usage
+Latency from `publish()` to the subscriber callback between two processes at 1 kHz (lower is better).
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark/cpu_per_message-dark.svg">
-  <img src="docs/benchmark/cpu_per_message.svg" alt="CPU time per message at 10 kHz, publisher and subscriber combined">
-</picture>
+- **Under CPU load** (1 KB): the median is 12 - 33 µs for UDS, against 141 - 921 µs for DDS (Fast DDS / Cyclone DDS) and Zenoh.
+- **With a real-time priority** (256 B): the largest latency is 27 - 57 µs for UDS, against 95 - 145 µs, and UDS needs
+  the priority on a single thread, which is a [constructor argument](#real-time-scheduling).
+
+All the numbers, the measurement setup and how to run the benchmark yourself are in [docs/benchmark.md](docs/benchmark.md).
 
 ## Concept
 
-DDS brings discovery, QoS matching and the RTPS protocol layer. For an event-driven path between two
-processes on the same machine that must react the moment a message arrives (e.g. `ros2_control` -> CAN
-gateway), that machinery is latency you do not need.
+**The problem.** For small messages between two processes on one machine, almost none of the latency is the copy
+of the data. It is the layers of the middleware on the receive side: after the kernel delivers the data, it passes
+through the DDS receive thread, RTPS processing, a wait set and the executor before the callback runs, and each
+hand-off between threads is a chance to wait behind other work. Shared memory and zero-copy only speed up the
+copy, so this remains.
 
-### Where the latency comes from
-
-The path from the publisher handing over a message to the subscriber callback being invoked has four stages:
-
-| Stage | What happens |
-|---|---|
-| 1. Serialization | The ROS message is turned into CDR bytes |
-| 2. Data transfer | The bytes are moved from the sending process to the receiving process |
-| 3. Receiver wake-up | The kernel wakes the waiting receive thread and puts it on a CPU |
-| 4. Middleware layers | RTPS processing -> DDS receive thread -> wait set -> executor -> callback |
-
-For commands of tens to hundreds of bytes, the copy in stage 2 takes very little time and almost all of the
-latency comes from stages 3 and 4. Shared memory and zero-copy speed up stage 2, so stages 3 and 4 remain
-unchanged when you use them.
-
-### What ros2_uds_ipc skips
+**The solution.** `ros2_uds_ipc` keeps the ROS 2 message types and replaces only the transport with a Unix domain
+socket. A dedicated thread waits on the socket and invokes the callback itself, with no hand-off between threads:
 
 ```
 DDS:           kernel -> DDS receive thread -> RTPS processing -> wait set -> executor -> callback
 ros2_uds_ipc:  kernel -> dedicated thread waiting in poll() -> callback
 ```
 
-- **Stage 4 is skipped entirely.** The receive thread woken by the kernel deserializes the message and
-  invokes the callback itself. There is no hand-off between threads.
-- **Stage 2 is only a copy through the kernel**, which is negligible for small messages.
-- **Stage 1 is skipped for fixed-size messages.** Messages made only of primitives and fixed-size arrays are sent
-  as their in-memory bytes. For any other rosidl type, including variable-length ones, CDR is used, and DDS pays
-  the same cost.
-- **Stage 3 remains.** It is determined by the scheduler and CPU power states. The library cannot remove it,
-  but a subscriber can opt in to a real-time priority and CPU pinning for its receive thread, so that it is not
-  kept waiting behind other work (see [Real-time scheduling](#real-time-scheduling)).
+In addition, messages made only of primitives and fixed-size arrays are sent as their in-memory bytes, without
+serialization. What remains is the time the kernel takes to wake the receive thread, which the library cannot remove but can
+shorten by giving that one thread a real-time priority (see [Real-time scheduling](#real-time-scheduling)).
 
-### Features
+## Features
 
 `ros2_uds_ipc` keeps the ROS 2 message types but replaces the transport:
 
