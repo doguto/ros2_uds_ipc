@@ -69,7 +69,7 @@
 ## Requirements
 
 - Linux
-- ROS 2 (Jazzy で開発)
+- ROS 2 Jazzy 以降 (Fast CDR 2.x)
 - C++17
 
 ## Installation
@@ -113,7 +113,7 @@ uds_ipc::UdsSubscriber<sensor_msgs::msg::JointState> subscriber(
 
 ソケットを準備できなかった場合、コンストラクタは `std::runtime_error` を投げます。第 3 引数の
 `max_message_size` (既定値 65536 バイト) は受信できるシリアライズ済みメッセージの最大サイズで、
-これを超える分は切り捨てられます。
+これを超えるメッセージは破棄されます。
 
 ### Publisher
 
@@ -189,7 +189,8 @@ OS が許可していないと、警告を出して既定のスケジューリ�
 
 ## Tech Stack
 
-- C++17、`rclcpp` (CDR シリアライズ、ミラー用の `GenericPublisher`)
+- C++17、`rclcpp` (ミラー用の `GenericPublisher`)
+- Fast CDR (生成された型サポート `rosidl_typesupport_fastrtps_cpp` 経由) による CDR シリアライズ
 - POSIX ソケット: `AF_UNIX` + `SOCK_SEQPACKET`、`poll()`
 - `ament_cmake`、GoogleTest
 

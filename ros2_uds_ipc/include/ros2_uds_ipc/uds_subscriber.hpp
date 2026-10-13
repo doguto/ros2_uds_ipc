@@ -9,9 +9,9 @@
 #include <utility>
 
 #include <rclcpp/generic_publisher.hpp>
-#include <rclcpp/serialization.hpp>
 #include <rclcpp/serialized_message.hpp>
 
+#include "ros2_uds_ipc/detail/cdr_codec.hpp"
 #include "ros2_uds_ipc/detail/raw_copy.hpp"
 #include "ros2_uds_ipc/detail/uds_socket.hpp"
 #include "ros2_uds_ipc/scheduling.hpp"
@@ -27,7 +27,7 @@ namespace uds_ipc
   public:
     using Callback = std::function<void(const MessageT &)>;
 
-    // max_message_size: serialized messages larger than this are truncated. Unused for fixed-size messages.
+    // max_message_size: serialized messages larger than this are dropped. Unused for fixed-size messages.
     // mirror: a publisher from create_uds_mirror(). If set, received messages are also forwarded to DDS.
     // scheduling: real-time priority and CPU pinning of the receive thread (see Scheduling). Off by default.
     // Throws std::runtime_error if the socket cannot be set up, or if the OS refuses scheduling.require.
@@ -82,8 +82,7 @@ namespace uds_ipc
         callback_(msg_);
 
         // DDS still needs CDR, so serialize only while someone is listening to the mirror.
-        if (mirror_ && mirror_->has_subscribers()) {
-          serializer_.serialize_message(&msg_, &serialized_);
+        if (mirror_ && mirror_->has_subscribers() && codec_.serialize(msg_, serialized_)) {
           const auto & rcl_msg = serialized_.get_rcl_serialized_message();
           mirror_->enqueue(rcl_msg.buffer, rcl_msg.buffer_length);
         }
@@ -91,7 +90,9 @@ namespace uds_ipc
         auto & rcl_msg = serialized_.get_rcl_serialized_message();
         rcl_msg.buffer_length = length;
 
-        serializer_.deserialize_message(&serialized_, &msg_);
+        // Truncated (larger than max_message_size), or not this message type.
+        if (!codec_.deserialize(rcl_msg.buffer, length, msg_)) return;
+
         callback_(msg_);
 
         if (mirror_ && mirror_->has_subscribers()) {
@@ -102,7 +103,7 @@ namespace uds_ipc
 
     Callback callback_;
     std::unique_ptr<UdsMirrorWorker> mirror_;
-    rclcpp::Serialization<MessageT> serializer_;
+    detail::CdrCodec<MessageT> codec_;
     rclcpp::SerializedMessage serialized_;
     MessageT msg_;
     // Must be declared last: its thread uses the members above.

@@ -208,6 +208,34 @@ TEST(UdsPubSub, SendTimeoutWaitsForSlowSubscriber)
   EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return received == message_count; }));
 }
 
+// A message larger than max_message_size arrives truncated. It is dropped, and later messages still arrive.
+TEST(UdsPubSub, DropsMessagesLargerThanMaxMessageSize)
+{
+  const std::string path = socket_path("oversized.sock");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<std::string> received;
+  uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
+    path, [&](const std_msgs::msg::String & msg) {
+      std::lock_guard<std::mutex> lock(mutex);
+      received.push_back(msg.data);
+      cv.notify_one();
+    }, 64);
+
+  uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+  std_msgs::msg::String msg;
+  msg.data = std::string(1000, 'x');
+  ASSERT_TRUE(publisher.publish(msg));
+  msg.data = "small";
+  ASSERT_TRUE(publisher.publish(msg));
+
+  std::unique_lock<std::mutex> lock(mutex);
+  ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return !received.empty(); }));
+  ASSERT_EQ(received.size(), 1u);
+  EXPECT_EQ(received[0], "small");
+}
+
 TEST(UdsPubSub, ReconnectsAfterSubscriberRestart)
 {
   const std::string path = socket_path("reconnect.sock");

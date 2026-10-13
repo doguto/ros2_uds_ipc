@@ -70,7 +70,7 @@ The connection is 1:1: one `UdsPublisher` talks to one `UdsSubscriber` through o
 ## Requirements
 
 - Linux
-- ROS 2 (developed on Jazzy)
+- ROS 2 Jazzy or later (Fast CDR 2.x)
 - C++17
 
 ## Installation
@@ -115,7 +115,7 @@ uds_ipc::UdsSubscriber<sensor_msgs::msg::JointState> subscriber(
 
 The constructor throws `std::runtime_error` if the socket cannot be set up. The third argument,
 `max_message_size` (default 65536 bytes), is the largest serialized message that can be received;
-anything larger is truncated.
+anything larger is dropped.
 
 ### Publisher
 
@@ -191,7 +191,8 @@ The publishing thread is yours: if it runs the control loop, give it a real-time
 
 ## Tech Stack
 
-- C++17, `rclcpp` (CDR serialization, `GenericPublisher` for the mirror)
+- C++17, `rclcpp` (`GenericPublisher` for the mirror)
+- Fast CDR, through the generated type support (`rosidl_typesupport_fastrtps_cpp`), for CDR serialization
 - POSIX sockets: `AF_UNIX` + `SOCK_SEQPACKET`, `poll()`
 - `ament_cmake`, GoogleTest
 
