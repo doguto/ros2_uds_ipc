@@ -76,7 +76,7 @@ Raw data: [`latency.csv`](benchmark/latency.csv) — all 1200 measurements (240 
   made only of primitives and fixed-size arrays.
 - **Idle is slower than loaded for UDS** (330 µs vs 35 µs at 100 Hz). With nothing else running, the CPU sits in a deep
   idle state between messages and waking it up dominates the latency. Busy-loop threads keep
-  the cores awake.
+  the cores awake. See [CPU idle states](#cpu-idle-states) for what limiting them does.
 - **Under load, the difference between UDS and the middlewares is much larger** (3x to 30x at 1 kHz), since the DDS /
   Zenoh receive path needs several threads to be scheduled in turn.
 - **At 10 kHz under load the machine is saturated** (4 busy-loop threads on 4 hardware threads), so the UDS series are
@@ -266,6 +266,55 @@ competing for the CPU. Each cell is "default scheduling → `SCHED_FIFO` priorit
 
 Raw data: [`latency_rt.csv`](benchmark/latency_rt.csv) (`rt_priority` 0 and 40, 50 runs each). To reproduce it,
 pass `RT_PRIORITY=40` to `run_latency_matrix.sh`; the process needs an `rtprio` limit, and Zenoh a running router.
+
+## CPU idle states
+
+Why the idle numbers are higher than the loaded ones, and what limiting the CPU idle states (C-states) does: idle,
+256 B at 1 kHz and 100 Hz. Each cell is "C7 (default) → C1E → C1", the deepest idle state the CPU was allowed to
+enter, in µs, as the median of 3 runs. The three settings were measured alternately. The limit was set through
+PM QoS: a process holds `/dev/cpu_dma_latency` open with the largest exit latency it accepts (10 µs for C1E, 1 µs
+for C1 on this CPU).
+
+| Setting | Share of the idle time spent in C1 | C1E | C3 | C7 |
+|---|---|---|---|---|
+| C7 (default) | 0.2% | 2.0% | 2.8% | 95.0% |
+| C1E | 0.6% | 99.4% | 0% | 0% |
+| C1 | 100% | 0% | 0% | 0% |
+
+### 1 kHz
+
+| Transport | Median | p99 | CPU time per message |
+|---|---|---|---|
+| UDS (fixed-size) | 134 → 34 → 15 | 172 → 58 → 51 | 207 → 88 → 54 |
+| UDS (variable-size) | 184 → 83 → 34 | 300 → 118 → 115 | 254 → 150 → 83 |
+| DDS (Cyclone DDS) | 205 → 158 → 144 | 274 → 231 → 199 | 294 → 248 → 182 |
+| DDS (Fast DDS) | 242 → 191 → 185 | 453 → 247 → 230 | 410 → 326 → 253 |
+| Zenoh | 358 → 286 → 272 | 467 → 357 → 321 | 505 → 425 → 355 |
+
+### 100 Hz
+
+| Transport | Median | p99 | CPU time per message |
+|---|---|---|---|
+| UDS (fixed-size) | 170 → 38 → 35 | 190 → 82 → 64 | 361 → 104 → 80 |
+| UDS (variable-size) | 338 → 96 → 84 | 437 → 186 → 161 | 570 → 175 → 140 |
+| DDS (Cyclone DDS) | 619 → 166 → 169 | 709 → 290 → 243 | 852 → 282 → 269 |
+| DDS (Fast DDS) | 642 → 230 → 198 | 758 → 328 → 280 | 1104 → 412 → 344 |
+| Zenoh | 979 → 299 → 304 | 1114 → 415 → 407 | 1323 → 472 → 440 |
+
+- **The idle latency of UDS is the CPU waking up.** By default an idle core spends 95% of its time in C7 and has to
+  come out of it for every message. Limited to C1, UDS (fixed-size) at 1 kHz goes from 134 µs to 15 µs, about the same
+  as under load (12 µs), where the busy-loop threads keep the cores awake.
+- **Limiting to C1E already gives most of it**: 134 µs to 34 µs at 1 kHz, and at 100 Hz there is little left between
+  C1E and C1.
+- **DDS and Zenoh gain less**, 144 - 272 µs at 1 kHz with C1, so the difference to UDS grows from about 1.5x to
+  about 10x (fixed-size) and 4x (variable-size). Why they do not come down further was not investigated; the CPU
+  frequency, which is also lower when idle, was not controlled.
+- Limiting the idle states raises the power drawn when idle, which was not measured. On a machine dedicated to
+  control it is a common setting, through PM QoS as above or through kernel parameters.
+- 3 runs per setting; the maxima vary too much between runs to be reported.
+
+Raw data: [`latency_idle_states.csv`](benchmark/latency_idle_states.csv) (90 runs, with the setting in
+`deepest_idle_state`).
 
 ## CSV columns
 
