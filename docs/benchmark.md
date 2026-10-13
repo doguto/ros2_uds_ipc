@@ -9,11 +9,11 @@ Median latency in µs (p99 in parentheses) from `publish()` to the subscriber ca
 
 | Transport | Idle | 4 busy-loop threads |
 |---|---|---|
-| UDS (fixed-size) | 120 (179) | 11.8 (37.2) |
-| UDS (variable-size) | 182 (277) | 33.2 (585) |
-| DDS (Fast DDS) | 236 (467) | 251 (2737) |
-| DDS (Cyclone DDS) | 205 (408) | 141 (1413) |
-| Zenoh | 358 (500) | 921 (3746) |
+| UDS (fixed-size) | 135 (178) | 12.0 (22.9) |
+| UDS (variable-size) | 128 (203) | 14.7 (39.6) |
+| DDS (Fast DDS) | 236 (333) | 712 (3128) |
+| DDS (Cyclone DDS) | 213 (390) | 152 (1944) |
+| Zenoh | 344 (496) | 967 (3221) |
 
 The idle numbers are dominated by the CPU waking up from a deep idle state; under load the middleware layers of
 DDS and Zenoh are what remains. With the idle states limited to C1 (256 B at 1 kHz), the idle latency of UDS drops
@@ -73,19 +73,19 @@ Raw data: [`latency.csv`](benchmark/latency.csv) — all 1200 measurements (240 
 
 ## Notes
 
-- **Skipping serialization helps.** Fixed-size messages are about 2 - 3x faster than variable-size ones: 170 µs vs
-  330 µs at 100 Hz idle, 30 µs vs 75 µs at 10 kHz idle, and 12 µs vs 33 µs at 100 Hz - 1 kHz under load (64 B -
-  1K). The gain shrinks as the payload grows (64K: 290 vs 570 µs at 100 Hz idle), and it applies only to messages
-  made only of primitives and fixed-size arrays.
-- **Idle is slower than loaded for UDS** (330 µs vs 35 µs at 100 Hz). With nothing else running, the CPU sits in a deep
+- **Skipping serialization helps a little.** Fixed-size messages are still the faster ones, by 10 - 30%: 170 - 178 µs
+  vs 184 - 234 µs at 100 Hz idle, 30 µs vs 36 µs at 10 kHz idle (1K), and 12 µs vs 15 µs at 1 kHz under load (64 B -
+  1K). The gap grows with the payload (64K: 295 vs 422 µs at 100 Hz idle), and it applies only to messages made
+  only of primitives and fixed-size arrays.
+- **Idle is slower than loaded for UDS** (184 µs vs 16 µs at 100 Hz). With nothing else running, the CPU sits in a deep
   idle state between messages and waking it up dominates the latency. Busy-loop threads keep
   the cores awake. See [CPU idle states](#cpu-idle-states) for what limiting them does.
-- **Under load, the difference between UDS and the middlewares is much larger** (3x to 30x at 1 kHz), since the DDS /
+- **Under load, the difference between UDS and the middlewares is much larger** (10x to 80x at 1 kHz, 1K), since the DDS /
   Zenoh receive path needs several threads to be scheduled in turn.
 - **At 10 kHz under load the machine is saturated** (4 busy-loop threads on 4 hardware threads), so the UDS series are
   dominated by scheduling and are noisy; do not read differences between them there.
 - **Fast DDS at 10 kHz with 64K, and at an unlimited rate**, queues messages (reliable + keep-all) and the latency
-  columns then measure the time spent in the queue (up to seconds), not the transport speed. Under load, 2 of the 5
+  columns then measure the time spent in the queue (up to seconds), not the transport speed. Under load, 3 or 4 of the 5
   runs of these conditions did not finish (the subscriber waited 10 s without receiving a message); they stayed
   incomplete when measured again, so they are left out of the medians and listed under "Incomplete runs".
 
@@ -97,51 +97,51 @@ Median (p99) from just before `publish()` to the subscriber callback.
 
 | Rate | Transport | 64 | 256 | 1K | 4K | 16K | 64K |
 |---|---|---|---|---|---|---|---|
-| 100 Hz | UDS (variable-size) | 330 (372) | 334 (377) | 354 (431) | 388 (448) | 428 (518) | 572 (661) |
-| 100 Hz | UDS (fixed-size) | 169 (193) | 171 (190) | 172 (198) | 183 (203) | 217 (251) | 293 (392) |
-| 100 Hz | DDS (Fast DDS) | 645 (759) | 625 (738) | 663 (759) | 678 (779) | 688 (823) | 976 (1112) |
-| 100 Hz | DDS (Cyclone DDS) | 611 (694) | 614 (695) | 576 (684) | 617 (714) | 773 (938) | 1060 (1375) |
-| 100 Hz | Zenoh | 966 (1083) | 968 (1106) | 920 (1041) | 939 (1041) | 982 (1095) | 1340 (1489) |
-| 1 kHz | UDS (variable-size) | 207 (340) | 127 (266) | 182 (277) | 155 (224) | 151 (265) | 267 (494) |
-| 1 kHz | UDS (fixed-size) | 106 (150) | 75.5 (146) | 120 (179) | 117 (186) | 143 (219) | 128 (263) |
-| 1 kHz | DDS (Fast DDS) | 243 (400) | 241 (361) | 236 (467) | 240 (373) | 263 (352) | 365 (446) |
-| 1 kHz | DDS (Cyclone DDS) | 212 (445) | 234 (534) | 205 (408) | 215 (339) | 264 (523) | 500 (710) |
-| 1 kHz | Zenoh | 365 (478) | 353 (499) | 358 (500) | 347 (475) | 385 (529) | 512 (644) |
-| 10 kHz | UDS (variable-size) | 74.1 (168) | 74.8 (163) | 73.7 (165) | 80.8 (173) | 98.4 (196) | 108 (186) |
-| 10 kHz | UDS (fixed-size) | 29.1 (73.8) | 29.7 (70.5) | 30.2 (65.4) | 34.5 (72.8) | 49.0 (134) | 84.8 (174) |
-| 10 kHz | DDS (Fast DDS) | 118 (474) | 118 (361) | 112 (265) | 103 (313) | 94.4 (2278) | 581520 (854913) |
-| 10 kHz | DDS (Cyclone DDS) | 99.3 (214) | 94.7 (206) | 97.0 (210) | 93.8 (211) | 89.3 (250) | 156 (270) |
-| 10 kHz | Zenoh | 83.4 (125) | 85.6 (184) | 81.5 (142) | 83.8 (608) | 92.5 (137) | 144 (855) |
-| Unlimited | UDS (variable-size) | 2315 (3914) | 1294 (2335) | 341 (1321) | 193 (436) | 41.1 (263) | 62.2 (171) |
-| Unlimited | UDS (fixed-size) | 744 (1076) | 503 (885) | 292 (386) | 94.0 (131) | 44.5 (155) | 34.6 (87.9) |
-| Unlimited | DDS (Fast DDS) | 2215634 (3017181) | 1784584 (1955586) | 4794702 (4953377) | 250270 (323059) | 287216 (553398) | 590137 (824326) |
-| Unlimited | DDS (Cyclone DDS) | 55.8 (2606) | 52.4 (3085) | 51.9 (2443) | 52.0 (196) | 68.8 (168) | 156 (255) |
-| Unlimited | Zenoh | 97025 (119672) | 95564 (108561) | 72177 (91509) | 34524 (51815) | 7497 (19613) | 3235 (4336) |
+| 100 Hz | UDS (variable-size) | 184 (213) | 197 (266) | 234 (282) | 212 (257) | 259 (303) | 422 (504) |
+| 100 Hz | UDS (fixed-size) | 170 (235) | 173 (188) | 178 (199) | 184 (199) | 216 (247) | 295 (375) |
+| 100 Hz | DDS (Fast DDS) | 660 (766) | 636 (732) | 670 (761) | 652 (773) | 726 (834) | 977 (1116) |
+| 100 Hz | DDS (Cyclone DDS) | 560 (619) | 607 (685) | 586 (668) | 625 (729) | 761 (901) | 1095 (1360) |
+| 100 Hz | Zenoh | 966 (1088) | 935 (1037) | 932 (1018) | 951 (1042) | 978 (1064) | 1303 (1450) |
+| 1 kHz | UDS (variable-size) | 122 (172) | 112 (177) | 128 (203) | 103 (134) | 128 (162) | 195 (307) |
+| 1 kHz | UDS (fixed-size) | 110 (171) | 87.6 (151) | 135 (178) | 115 (151) | 143 (224) | 197 (328) |
+| 1 kHz | DDS (Fast DDS) | 239 (469) | 239 (520) | 236 (333) | 269 (595) | 271 (391) | 370 (474) |
+| 1 kHz | DDS (Cyclone DDS) | 252 (494) | 205 (286) | 213 (390) | 231 (428) | 307 (545) | 450 (685) |
+| 1 kHz | Zenoh | 365 (518) | 390 (509) | 344 (496) | 363 (500) | 379 (510) | 499 (655) |
+| 10 kHz | UDS (variable-size) | 34.1 (84.3) | 40.8 (71.5) | 36.1 (74.0) | 42.2 (87.5) | 63.2 (144) | 94.9 (177) |
+| 10 kHz | UDS (fixed-size) | 33.5 (70.7) | 28.9 (65.8) | 30.2 (76.8) | 34.6 (82.8) | 53.1 (109) | 82.2 (166) |
+| 10 kHz | DDS (Fast DDS) | 117 (271) | 118 (313) | 113 (264) | 109 (266) | 101 (12579) | 579595 (854818) |
+| 10 kHz | DDS (Cyclone DDS) | 101 (221) | 99.9 (213) | 97.4 (213) | 94.6 (204) | 91.4 (255) | 155 (254) |
+| 10 kHz | Zenoh | 84.4 (129) | 82.4 (171) | 82.2 (143) | 83.6 (214) | 90.9 (122) | 142 (306) |
+| Unlimited | UDS (variable-size) | 692 (1005) | 449 (780) | 277 (545) | 52.9 (153) | 58.3 (153) | 56.8 (118) |
+| Unlimited | UDS (fixed-size) | 652 (1093) | 488 (663) | 286 (379) | 70.6 (112) | 47.6 (133) | 35.2 (90.3) |
+| Unlimited | DDS (Fast DDS) | 4465683 (4649464) | 3008678 (3248924) | 4506229 (4695043) | 232801 (389631) | 282415 (532888) | 581707 (823755) |
+| Unlimited | DDS (Cyclone DDS) | 48.8 (2257) | 57.5 (3378) | 52.8 (1952) | 53.6 (133) | 68.4 (162) | 156 (254) |
+| Unlimited | Zenoh | 85555 (97482) | 87833 (98344) | 73752 (81890) | 33262 (59237) | 4297 (5686) | 3843 (4795) |
 
 ### 4 busy-loop threads
 
 | Rate | Transport | 64 | 256 | 1K | 4K | 16K | 64K |
 |---|---|---|---|---|---|---|---|
-| 100 Hz | UDS (variable-size) | 34.8 (954) | 35.3 (598) | 35.1 (586) | 36.6 (674) | 47.1 (866) | 69.2 (1029) |
-| 100 Hz | UDS (fixed-size) | 13.2 (96.6) | 13.5 (271) | 13.4 (306) | 15.3 (780) | 19.8 (179) | 33.0 (62.8) |
-| 100 Hz | DDS (Fast DDS) | 141 (2997) | 162 (3104) | 380 (2614) | 558 (2501) | 514 (2750) | 240 (3731) |
-| 100 Hz | DDS (Cyclone DDS) | 82.9 (2215) | 81.2 (2070) | 78.9 (2140) | 232 (1622) | 366 (2462) | 340 (3360) |
-| 100 Hz | Zenoh | 657 (3316) | 859 (3686) | 684 (3345) | 240 (3245) | 297 (3382) | 891 (4003) |
-| 1 kHz | UDS (variable-size) | 32.2 (436) | 31.9 (92.1) | 33.2 (585) | 35.1 (67.8) | 43.2 (115) | 64.5 (112) |
-| 1 kHz | UDS (fixed-size) | 11.5 (36.5) | 11.6 (28.3) | 11.8 (37.2) | 13.6 (819) | 18.6 (46.2) | 31.9 (74.4) |
-| 1 kHz | DDS (Fast DDS) | 555 (3293) | 510 (3525) | 251 (2737) | 1006 (3262) | 701 (4472) | 913 (4178) |
-| 1 kHz | DDS (Cyclone DDS) | 667 (1250) | 86.5 (1540) | 141 (1413) | 573 (1913) | 588 (2632) | 1064 (3436) |
-| 1 kHz | Zenoh | 977 (3230) | 838 (3753) | 921 (3746) | 693 (3643) | 961 (3748) | 1880 (5133) |
-| 10 kHz | UDS (variable-size) | 301 (1307) | 353 (1885) | 374 (1408) | 380 (1768) | 1015 (2869) | 1037 (2927) |
-| 10 kHz | UDS (fixed-size) | 298 (1812) | 10.9 (894) | 335 (1402) | 252 (1399) | 1013 (2941) | 1006 (2954) |
-| 10 kHz | DDS (Fast DDS) | 2408 (5271) | 2018 (5289) | 2397 (5690) | 1337 (6010) | 4507 (47330) | 1777758 (2078931) |
-| 10 kHz | DDS (Cyclone DDS) | 616 (3190) | 626 (2679) | 527 (2676) | 744 (3806) | 1226 (4328) | 1375 (4402) |
-| 10 kHz | Zenoh | 1361 (4798) | 1395 (4334) | 1315 (4521) | 1638 (4203) | 1958 (16593) | 3086 (14795) |
-| Unlimited | UDS (variable-size) | 4286 (12399) | 2962 (7607) | 1509 (3926) | 478 (3086) | 279 (2868) | 185 (1034) |
-| Unlimited | UDS (fixed-size) | 1196 (6239) | 507 (4431) | 274 (3853) | 196 (2892) | 130 (2627) | 85.7 (235) |
-| Unlimited | DDS (Fast DDS) | 175501 (303745) | 60894 (151734) | 235462 (372715) | 369018 (526475) | 790514 (1096712) | 1756033 (2188914) |
-| Unlimited | DDS (Cyclone DDS) | 7071 (23956) | 4475 (23196) | 9189 (23124) | 4039 (10852) | 1176 (5151) | 1856 (3860) |
-| Unlimited | Zenoh | 94876 (121026) | 76664 (155596) | 63717 (103256) | 40052 (55347) | 2996 (19472) | 3003 (13674) |
+| 100 Hz | UDS (variable-size) | 16.0 (772) | 15.3 (30.7) | 16.4 (915) | 17.6 (123) | 26.5 (937) | 47.6 (901) |
+| 100 Hz | UDS (fixed-size) | 12.9 (18.8) | 12.7 (19.1) | 13.0 (279) | 14.4 (21.7) | 20.1 (30.6) | 34.8 (1010) |
+| 100 Hz | DDS (Fast DDS) | 157 (2436) | 429 (2724) | 819 (2622) | 485 (2022) | 726 (2696) | 597 (3642) |
+| 100 Hz | DDS (Cyclone DDS) | 79.0 (1906) | 81.1 (1783) | 542 (1432) | 87.8 (2447) | 149 (2929) | 788 (3184) |
+| 100 Hz | Zenoh | 543 (3265) | 817 (3285) | 884 (3021) | 849 (3306) | 951 (3918) | 954 (3786) |
+| 1 kHz | UDS (variable-size) | 13.7 (38.8) | 14.2 (41.9) | 14.7 (39.6) | 16.5 (42.5) | 24.8 (67.0) | 46.6 (160) |
+| 1 kHz | UDS (fixed-size) | 11.6 (24.4) | 11.7 (35.9) | 12.0 (22.9) | 13.5 (38.2) | 18.5 (51.3) | 32.4 (66.5) |
+| 1 kHz | DDS (Fast DDS) | 659 (3989) | 836 (4017) | 712 (3128) | 754 (4045) | 1023 (3905) | 712 (3959) |
+| 1 kHz | DDS (Cyclone DDS) | 163 (1119) | 852 (1107) | 152 (1944) | 668 (2048) | 684 (3226) | 823 (3185) |
+| 1 kHz | Zenoh | 544 (3148) | 989 (3842) | 967 (3221) | 1036 (3296) | 1092 (3747) | 1997 (4996) |
+| 10 kHz | UDS (variable-size) | 213 (1039) | 387 (1616) | 157 (1662) | 301 (1541) | 1010 (2922) | 162 (2939) |
+| 10 kHz | UDS (fixed-size) | 118 (1074) | 76.2 (1030) | 306 (1868) | 56.7 (1009) | 1002 (2939) | 1004 (2951) |
+| 10 kHz | DDS (Fast DDS) | 2326 (5465) | 644 (3912) | 2639 (5997) | 1253 (6226) | 10146 (112386) | 1666790 (2129516) |
+| 10 kHz | DDS (Cyclone DDS) | 503 (2826) | 598 (3800) | 669 (3617) | 852 (7072) | 1677 (4157) | 1189 (4089) |
+| 10 kHz | Zenoh | 2041 (4327) | 1570 (4211) | 793 (4588) | 1700 (4096) | 2029 (11409) | 3010 (15833) |
+| Unlimited | UDS (variable-size) | 1138 (5856) | 871 (5186) | 336 (3935) | 210 (2258) | 106 (2501) | 138 (2399) |
+| Unlimited | UDS (fixed-size) | 760 (4739) | 497 (4012) | 522 (3913) | 96.2 (2835) | 149 (2631) | 99.2 (2745) |
+| Unlimited | DDS (Fast DDS) | 200925 (351589) | 205850 (522151) | 89641 (207256) | 459736 (820451) | 782750 (1140214) | 1551693 (2228613) |
+| Unlimited | DDS (Cyclone DDS) | 15815 (39219) | 19654 (45942) | 7565 (16841) | 1820 (10147) | 1233 (5170) | 1307 (4053) |
+| Unlimited | Zenoh | 90671 (134743) | 75264 (145078) | 73871 (106773) | 32429 (51325) | 3086 (20445) | 3000 (13132) |
 
 At an unlimited rate the latency measures how long messages wait in a queue rather than how fast the transport is.
 
@@ -151,8 +151,8 @@ The subscriber gave up waiting before the end marker arrived (messages piled up 
 
 | Transport | CPU | Rate | Payload | Complete runs |
 |---|---|---|---|---|
-| DDS (Fast DDS) | 4 busy-loop threads | Unlimited | 64K | 3 of 5 |
-| DDS (Fast DDS) | 4 busy-loop threads | 10 kHz | 64K | 3 of 5 |
+| DDS (Fast DDS) | 4 busy-loop threads | Unlimited | 64K | 1 of 5 |
+| DDS (Fast DDS) | 4 busy-loop threads | 10 kHz | 64K | 2 of 5 |
 
 ## Unlimited rate
 
@@ -173,8 +173,8 @@ From creating the publisher until a subscriber that is already running can be re
 
 | CPU | UDS (variable-size) | UDS (fixed-size) | DDS (Fast DDS) | DDS (Cyclone DDS) | Zenoh |
 |---|---|---|---|---|---|
-| Idle | 0.4 ms (0.4 - 0.5) | 0.1 ms (0.1 - 0.1) | 100.0 ms (97.9 - 101.1) | 0.6 ms (0.6 - 0.7) | 0.6 ms (0.5 - 0.7) |
-| 4 busy-loop threads | 0.9 ms (0.4 - 3.0) | 0.1 ms (0.1 - 2.6) | 1579.8 ms (410.3 - 1592.7) | 1.2 ms (0.7 - 3.6) | 0.6 ms (0.6 - 3.1) |
+| Idle | 0.3 ms (0.3 - 0.4) | 0.2 ms (0.2 - 0.2) | 100.0 ms (98.1 - 101.2) | 0.6 ms (0.6 - 0.7) | 0.5 ms (0.5 - 0.6) |
+| 4 busy-loop threads | 0.5 ms (0.4 - 3.6) | 0.3 ms (0.3 - 2.6) | 1590.6 ms (828.0 - 1597.9) | 1.7 ms (0.7 - 3.5) | 0.6 ms (0.5 - 4.6) |
 
 ## Memory
 
@@ -184,44 +184,44 @@ Peak RSS of the publisher / subscriber process (MB): median, and maximum in pare
 |---|---|---|
 | UDS (variable-size) | 28 (28) | 28 (28) |
 | UDS (fixed-size) | 27 (28) | 28 (28) |
-| DDS (Fast DDS) | 28 (395) | 28 (298) |
+| DDS (Fast DDS) | 28 (395) | 29 (299) |
 | DDS (Cyclone DDS) | 16 (17) | 17 (20) |
-| Zenoh | 23 (23) | 23 (50) |
+| Zenoh | 23 (23) | 23 (51) |
 
 ## CPU time per message (µs, publisher + subscriber)
 
 | CPU | Rate | Transport | 64 | 256 | 1K | 4K | 16K | 64K |
 |---|---|---|---|---|---|---|---|---|
-| Idle | 100 Hz | UDS (variable-size) | 518 | 519 | 538 | 529 | 647 | 722 |
-| Idle | 100 Hz | UDS (fixed-size) | 348 | 344 | 353 | 360 | 401 | 479 |
-| Idle | 100 Hz | DDS (Fast DDS) | 1080 | 1101 | 1066 | 1116 | 1283 | 2006 |
-| Idle | 100 Hz | DDS (Cyclone DDS) | 919 | 892 | 919 | 1068 | 1597 | 2088 |
-| Idle | 100 Hz | Zenoh | 1338 | 1298 | 1337 | 1341 | 1390 | 1977 |
-| Idle | 1 kHz | UDS (variable-size) | 268 | 209 | 233 | 216 | 237 | 353 |
-| Idle | 1 kHz | UDS (fixed-size) | 144 | 137 | 216 | 204 | 239 | 214 |
-| Idle | 1 kHz | DDS (Fast DDS) | 410 | 424 | 413 | 434 | 476 | 548 |
-| Idle | 1 kHz | DDS (Cyclone DDS) | 365 | 358 | 332 | 352 | 432 | 757 |
-| Idle | 1 kHz | Zenoh | 512 | 514 | 547 | 505 | 537 | 745 |
-| Idle | 10 kHz | UDS (variable-size) | 104 | 105 | 105 | 112 | 130 | 135 |
-| Idle | 10 kHz | UDS (fixed-size) | 79.2 | 79.3 | 81.6 | 84.0 | 97.5 | 116 |
-| Idle | 10 kHz | DDS (Fast DDS) | 169 | 168 | 161 | 156 | 151 | 338 |
-| Idle | 10 kHz | DDS (Cyclone DDS) | 141 | 134 | 138 | 130 | 148 | 245 |
-| Idle | 10 kHz | Zenoh | 137 | 141 | 136 | 142 | 150 | 246 |
-| 4 busy-loop threads | 100 Hz | UDS (variable-size) | 79.4 | 80.7 | 82.1 | 81.9 | 91.9 | 114 |
-| 4 busy-loop threads | 100 Hz | UDS (fixed-size) | 56.1 | 56.7 | 52.8 | 58.6 | 62.4 | 70.4 |
-| 4 busy-loop threads | 100 Hz | DDS (Fast DDS) | 160 | 164 | 160 | 156 | 175 | 298 |
-| 4 busy-loop threads | 100 Hz | DDS (Cyclone DDS) | 118 | 120 | 125 | 138 | 200 | 274 |
-| 4 busy-loop threads | 100 Hz | Zenoh | 176 | 172 | 172 | 176 | 186 | 289 |
-| 4 busy-loop threads | 1 kHz | UDS (variable-size) | 61.7 | 59.5 | 58.3 | 64.1 | 72.3 | 90.5 |
-| 4 busy-loop threads | 1 kHz | UDS (fixed-size) | 39.2 | 37.4 | 37.4 | 40.8 | 47.6 | 59.2 |
-| 4 busy-loop threads | 1 kHz | DDS (Fast DDS) | 126 | 125 | 122 | 134 | 148 | 196 |
-| 4 busy-loop threads | 1 kHz | DDS (Cyclone DDS) | 104 | 107 | 108 | 115 | 141 | 250 |
-| 4 busy-loop threads | 1 kHz | Zenoh | 150 | 148 | 149 | 152 | 161 | 258 |
-| 4 busy-loop threads | 10 kHz | UDS (variable-size) | 33.8 | 32.5 | 32.0 | 38.4 | 33.6 | 77.2 |
-| 4 busy-loop threads | 10 kHz | UDS (fixed-size) | 24.2 | 18.4 | 18.3 | 20.5 | 29.7 | 39.4 |
-| 4 busy-loop threads | 10 kHz | DDS (Fast DDS) | 55.7 | 62.3 | 55.8 | 64.3 | 71.4 | 297 |
-| 4 busy-loop threads | 10 kHz | DDS (Cyclone DDS) | 57.1 | 54.9 | 58.7 | 59.5 | 79.0 | 184 |
-| 4 busy-loop threads | 10 kHz | Zenoh | 65.1 | 56.6 | 63.6 | 62.0 | 82.3 | 235 |
+| Idle | 100 Hz | UDS (variable-size) | 371 | 402 | 385 | 393 | 446 | 566 |
+| Idle | 100 Hz | UDS (fixed-size) | 356 | 352 | 356 | 363 | 411 | 473 |
+| Idle | 100 Hz | DDS (Fast DDS) | 1122 | 1067 | 1111 | 1166 | 1225 | 2064 |
+| Idle | 100 Hz | DDS (Cyclone DDS) | 844 | 918 | 904 | 1132 | 1604 | 2141 |
+| Idle | 100 Hz | Zenoh | 1337 | 1340 | 1351 | 1294 | 1393 | 1968 |
+| Idle | 1 kHz | UDS (variable-size) | 196 | 189 | 232 | 160 | 186 | 263 |
+| Idle | 1 kHz | UDS (fixed-size) | 173 | 183 | 224 | 178 | 245 | 276 |
+| Idle | 1 kHz | DDS (Fast DDS) | 427 | 454 | 412 | 495 | 473 | 591 |
+| Idle | 1 kHz | DDS (Cyclone DDS) | 400 | 309 | 353 | 369 | 454 | 713 |
+| Idle | 1 kHz | Zenoh | 512 | 517 | 515 | 528 | 541 | 719 |
+| Idle | 10 kHz | UDS (variable-size) | 82.1 | 86.6 | 87.6 | 86.0 | 98.7 | 126 |
+| Idle | 10 kHz | UDS (fixed-size) | 82.5 | 77.1 | 77.4 | 82.2 | 94.6 | 116 |
+| Idle | 10 kHz | DDS (Fast DDS) | 169 | 170 | 166 | 160 | 154 | 324 |
+| Idle | 10 kHz | DDS (Cyclone DDS) | 144 | 141 | 136 | 130 | 148 | 239 |
+| Idle | 10 kHz | Zenoh | 138 | 137 | 139 | 142 | 149 | 243 |
+| 4 busy-loop threads | 100 Hz | UDS (variable-size) | 56.9 | 50.8 | 59.2 | 60.1 | 68.2 | 86.8 |
+| 4 busy-loop threads | 100 Hz | UDS (fixed-size) | 49.1 | 56.0 | 49.7 | 57.9 | 64.1 | 76.0 |
+| 4 busy-loop threads | 100 Hz | DDS (Fast DDS) | 168 | 152 | 138 | 147 | 159 | 291 |
+| 4 busy-loop threads | 100 Hz | DDS (Cyclone DDS) | 113 | 113 | 117 | 138 | 197 | 272 |
+| 4 busy-loop threads | 100 Hz | Zenoh | 173 | 170 | 167 | 174 | 181 | 283 |
+| 4 busy-loop threads | 1 kHz | UDS (variable-size) | 38.4 | 41.8 | 39.5 | 44.2 | 50.6 | 71.2 |
+| 4 busy-loop threads | 1 kHz | UDS (fixed-size) | 36.7 | 33.0 | 36.7 | 39.5 | 44.0 | 61.9 |
+| 4 busy-loop threads | 1 kHz | DDS (Fast DDS) | 127 | 121 | 126 | 129 | 141 | 198 |
+| 4 busy-loop threads | 1 kHz | DDS (Cyclone DDS) | 104 | 99.4 | 105 | 110 | 140 | 241 |
+| 4 busy-loop threads | 1 kHz | Zenoh | 150 | 151 | 148 | 150 | 158 | 252 |
+| 4 busy-loop threads | 10 kHz | UDS (variable-size) | 26.2 | 26.1 | 27.8 | 28.4 | 35.9 | 52.8 |
+| 4 busy-loop threads | 10 kHz | UDS (fixed-size) | 19.5 | 22.6 | 23.8 | 18.0 | 28.0 | 43.1 |
+| 4 busy-loop threads | 10 kHz | DDS (Fast DDS) | 58.6 | 55.1 | 57.1 | 60.9 | 77.0 | 276 |
+| 4 busy-loop threads | 10 kHz | DDS (Cyclone DDS) | 51.4 | 54.7 | 51.9 | 60.1 | 79.8 | 184 |
+| 4 busy-loop threads | 10 kHz | Zenoh | 50.9 | 48.8 | 76.0 | 54.5 | 83.9 | 249 |
 
 ## Real-time scheduling
 
