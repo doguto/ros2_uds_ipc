@@ -154,13 +154,15 @@ uds_ipc::UdsPublisher<sensor_msgs::msg::JointState> publisher("/run/my_robot/joi
 ## Benchmark
 
 Measured with the `ros2_uds_ipc_benchmark` package: a publisher node and a subscriber node in separate
-processes, 6 payload sizes, idle and with 20 busy-loop threads competing for the CPU.
+processes, 6 payload sizes, idle and with 4 busy-loop threads competing for the CPU.
 
 - **UDS (send timeout)** — `publish(msg, 1s)`, which waits for the subscriber instead of dropping a message
   when its queue is full. Below the rates where that happens, the non-blocking `publish(msg)` performs the same.
-- **DDS (Fast DDS)** — a plain `rclcpp` publisher / subscription, reliable + keep-all, default transport
+- **DDS (Fast DDS)** / **DDS (Cyclone DDS)** — a plain `rclcpp` publisher / subscription with `rmw_fastrtps_cpp` /
+  `rmw_cyclonedds_cpp`, reliable + keep-all, default transport
+- **Zenoh** — the same with `rmw_zenoh_cpp`, through a local `rmw_zenohd` router
 
-Environment: Intel Core i7-13700H (20 threads), WSL2 (kernel 6.18), ROS 2 Jazzy, `rmw_fastrtps_cpp`.
+Environment: Intel Core i5-3427U (4 threads), Linux 7.0.0-31-generic, ROS 2 Jazzy.
 The charts show the median of 5 runs per condition, measured without CPU pinning or real-time scheduling.
 
 Other publish rates, message loss, time to connect, memory, the raw data and how to run the benchmark

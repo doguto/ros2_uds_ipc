@@ -40,7 +40,7 @@ install(
 )
 
 install(
-  PROGRAMS scripts/plot_latency.py scripts/run_latency_matrix.sh
+  PROGRAMS scripts/plot_latency.py scripts/report_latency.py scripts/run_latency_matrix.sh
   DESTINATION lib/${PROJECT_NAME}
 )
 

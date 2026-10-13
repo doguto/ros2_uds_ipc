@@ -150,13 +150,15 @@ uds_ipc::UdsPublisher<sensor_msgs::msg::JointState> publisher("/run/my_robot/joi
 ## Benchmark
 
 `ros2_uds_ipc_benchmark` パッケージで計測しました。publisher ノードと subscriber ノードを別プロセスで起動し、
-ペイロード 6 種を、無負荷と、busy loop スレッド 20 本と CPU を奪い合う状態の両方で測っています。
+ペイロード 6 種を、無負荷と、busy loop スレッド 4 本と CPU を奪い合う状態の両方で測っています。
 
 - **UDS (send timeout)** — `publish(msg, 1s)`。受信キューが満杯のとき、メッセージを捨てずに subscriber を待ちます。
   満杯にならないレートでは、ノンブロッキングの `publish(msg)` も同じ性能です。
-- **DDS (Fast DDS)** — 通常の `rclcpp` publisher / subscription。reliable + keep-all、トランスポートはデフォルト
+- **DDS (Fast DDS)** / **DDS (Cyclone DDS)** — 通常の `rclcpp` publisher / subscription を `rmw_fastrtps_cpp` /
+  `rmw_cyclonedds_cpp` で。reliable + keep-all、トランスポートはデフォルト
+- **Zenoh** — 同じ構成を `rmw_zenoh_cpp` で。ローカルの `rmw_zenohd` ルーター経由
 
-環境: Intel Core i7-13700H (20 スレッド)、WSL2 (kernel 6.18)、ROS 2 Jazzy、`rmw_fastrtps_cpp`。
+環境: Intel Core i5-3427U (4 スレッド)、Linux 7.0.0-31-generic、ROS 2 Jazzy。
 グラフは各条件 5 回の実行の中央値です。CPU 固定やリアルタイムスケジューリングは行っていません。
 
 他の送信レート・メッセージの取りこぼし・接続時間・メモリ・生データ・自分で計測する手順は
