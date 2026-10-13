@@ -2,6 +2,7 @@
 """Render the CSV written by run_latency_matrix.sh into SVG charts (a light and a dark variant each).
 
 A condition that was measured more than once is plotted as the median of its runs.
+Runs that did not finish (the end marker never arrived) are left out.
 
 Usage: ros2 run ros2_uds_ipc_benchmark plot_latency.py RESULT_CSV OUTPUT_DIR [--exclude SERIES ...]
 """
@@ -58,15 +59,26 @@ def load_rows(path):
                     row[key] = float(value)
             rows.append(row)
 
-    # Collapse repeated runs of a condition into their median.
+    # A run whose subscriber gave up before the end marker has no publisher-side data and only the messages
+    # that arrived early, so it is left out. A condition with no complete run is not reported at all.
     runs = {}
+    dropped = {}
     for row in rows:
         key = (row['series'], row['payload_bytes'], row['rate_hz'], row['load_threads'])
-        runs.setdefault(key, []).append(row)
-    return [
-        {name: value if isinstance(value, str) else statistics.median(r[name] for r in group)
-         for name, value in group[0].items()}
-        for group in runs.values()]
+        if row['received'] + row['publish_failed'] < row['count']:
+            dropped[key] = dropped.get(key, 0) + 1
+        else:
+            runs.setdefault(key, []).append(row)
+
+    # Collapse repeated runs of a condition into their median.
+    collapsed = []
+    for key, group in runs.items():
+        row = {name: value if isinstance(value, str) else statistics.median(r[name] for r in group)
+               for name, value in group[0].items()}
+        row['runs'] = len(group)
+        row['runs_dropped'] = dropped.get(key, 0)
+        collapsed.append(row)
+    return collapsed
 
 
 def compact(value, _position=None):

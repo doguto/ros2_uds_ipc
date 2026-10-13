@@ -2,6 +2,7 @@
 """Render the CSV written by run_latency_matrix.sh into a Markdown report in the style of docs/benchmark.md.
 
 A condition that was measured more than once is reported as the median of its runs.
+Runs that did not finish (the end marker never arrived) are left out and listed in the report.
 
 Usage: ros2 run ros2_uds_ipc_benchmark report_latency.py RESULT_CSV OUTPUT_MD [--charts-dir DIR] [--environment TEXT]
 """
@@ -77,6 +78,18 @@ def main():
         out += table(['Rate', 'Transport'] + [size_label(s) for s in sizes], body) + ['']
     out += ['At an unlimited rate the latency measures how long messages wait in a queue rather than how fast the '
             'transport is.', '']
+
+    # Runs left out because the subscriber timed out before the end marker.
+    partial = [r for r in rows if r['runs_dropped'] > 0]
+    if partial:
+        out += ['### Incomplete runs', '',
+                'The subscriber gave up waiting before the end marker arrived (messages piled up in the middleware '
+                'queue), so these runs are left out of the medians above.', '']
+        body = []
+        for row in sorted(partial, key=lambda r: (r['series'], r['load_threads'], r['rate_hz'], r['payload_bytes'])):
+            body.append([LABELS[row['series']], load_label(row['load_threads']), rate_label(row['rate_hz']),
+                         size_label(row['payload_bytes']), f'{int(row["runs"])} of {int(row["runs"] + row["runs_dropped"])}'])
+        out += table(['Transport', 'CPU', 'Rate', 'Payload', 'Complete runs'], body) + ['']
 
     out += ['## Message loss', '',
             'Share of messages that `publish()` reported as not sent. Series that never lost a message are listed '

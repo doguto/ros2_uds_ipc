@@ -35,7 +35,9 @@ are the median of the 5 runs, which is also what the charts in the README show.
 - **At 10 kHz under load the machine is saturated** (4 busy-loop threads on 4 hardware threads), so the UDS series are
   dominated by scheduling and are noisy; do not read differences between them there.
 - **Fast DDS at 10 kHz with 64K, and at an unlimited rate**, queues messages (reliable + keep-all) and the latency
-  columns then measure the time spent in the queue (up to seconds), not the transport speed.
+  columns then measure the time spent in the queue (up to seconds), not the transport speed. Under load, 2 of the 5
+  runs of these conditions did not finish (the subscriber waited 10 s without receiving a message); they stayed
+  incomplete when measured again, so they are left out of the medians and listed under "Incomplete runs".
 
 ## Latency (µs)
 
@@ -64,7 +66,7 @@ Median (p99) from just before `publish()` to the subscriber callback.
 | Unlimited | UDS (fixed-size) | 744 (1076) | 503 (885) | 292 (386) | 94.0 (131) | 44.5 (155) | 34.6 (87.9) |
 | Unlimited | DDS (Fast DDS) | 2215634 (3017181) | 1784584 (1955586) | 4794702 (4953377) | 250270 (323059) | 287216 (553398) | 590137 (824326) |
 | Unlimited | DDS (Cyclone DDS) | 55.8 (2606) | 52.4 (3085) | 51.9 (2443) | 52.0 (196) | 68.8 (168) | 156 (255) |
-| Unlimited | Zenoh | 97025 (119672) | 95564 (108561) | 72177 (91509) | 34524 (51815) | 7603 (12396) | 3235 (4336) |
+| Unlimited | Zenoh | 97025 (119672) | 95564 (108561) | 72177 (91509) | 34524 (51815) | 7497 (19613) | 3235 (4336) |
 
 ### 4 busy-loop threads
 
@@ -82,16 +84,25 @@ Median (p99) from just before `publish()` to the subscriber callback.
 | 1 kHz | Zenoh | 977 (3230) | 838 (3753) | 921 (3746) | 693 (3643) | 961 (3748) | 1880 (5133) |
 | 10 kHz | UDS (variable-size) | 301 (1307) | 353 (1885) | 374 (1408) | 380 (1768) | 1015 (2869) | 1037 (2927) |
 | 10 kHz | UDS (fixed-size) | 298 (1812) | 10.9 (894) | 335 (1402) | 252 (1399) | 1013 (2941) | 1006 (2954) |
-| 10 kHz | DDS (Fast DDS) | 2408 (5271) | 2018 (5289) | 2397 (5690) | 1337 (6010) | 4507 (47330) | 1681733 (2083718) |
+| 10 kHz | DDS (Fast DDS) | 2408 (5271) | 2018 (5289) | 2397 (5690) | 1337 (6010) | 4507 (47330) | 1777758 (2078931) |
 | 10 kHz | DDS (Cyclone DDS) | 616 (3190) | 626 (2679) | 527 (2676) | 744 (3806) | 1226 (4328) | 1375 (4402) |
 | 10 kHz | Zenoh | 1361 (4798) | 1395 (4334) | 1315 (4521) | 1638 (4203) | 1958 (16593) | 3086 (14795) |
 | Unlimited | UDS (variable-size) | 4286 (12399) | 2962 (7607) | 1509 (3926) | 478 (3086) | 279 (2868) | 185 (1034) |
 | Unlimited | UDS (fixed-size) | 1196 (6239) | 507 (4431) | 274 (3853) | 196 (2892) | 130 (2627) | 85.7 (235) |
-| Unlimited | DDS (Fast DDS) | 175501 (303745) | 60894 (151734) | 235462 (372715) | 369018 (526475) | 790514 (1096712) | 1594747 (1850048) |
+| Unlimited | DDS (Fast DDS) | 175501 (303745) | 60894 (151734) | 235462 (372715) | 369018 (526475) | 790514 (1096712) | 1756033 (2188914) |
 | Unlimited | DDS (Cyclone DDS) | 7071 (23956) | 4475 (23196) | 9189 (23124) | 4039 (10852) | 1176 (5151) | 1856 (3860) |
 | Unlimited | Zenoh | 94876 (121026) | 76664 (155596) | 63717 (103256) | 40052 (55347) | 2996 (19472) | 3003 (13674) |
 
 At an unlimited rate the latency measures how long messages wait in a queue rather than how fast the transport is.
+
+### Incomplete runs
+
+The subscriber gave up waiting before the end marker arrived (messages piled up in the middleware queue), so these runs are left out of the medians above.
+
+| Transport | CPU | Rate | Payload | Complete runs |
+|---|---|---|---|---|
+| DDS (Fast DDS) | 4 busy-loop threads | Unlimited | 64K | 3 of 5 |
+| DDS (Fast DDS) | 4 busy-loop threads | 10 kHz | 64K | 3 of 5 |
 
 ## Unlimited rate
 
@@ -113,7 +124,7 @@ From creating the publisher until a subscriber that is already running can be re
 | CPU | UDS (variable-size) | UDS (fixed-size) | DDS (Fast DDS) | DDS (Cyclone DDS) | Zenoh |
 |---|---|---|---|---|---|
 | Idle | 0.4 ms (0.4 - 0.5) | 0.1 ms (0.1 - 0.1) | 100.0 ms (97.9 - 101.1) | 0.6 ms (0.6 - 0.7) | 0.6 ms (0.5 - 0.7) |
-| 4 busy-loop threads | 0.9 ms (0.4 - 3.0) | 0.1 ms (0.1 - 2.6) | 1579.5 ms (0.0 - 1592.7) | 1.2 ms (0.7 - 3.6) | 0.6 ms (0.6 - 3.1) |
+| 4 busy-loop threads | 0.9 ms (0.4 - 3.0) | 0.1 ms (0.1 - 2.6) | 1579.8 ms (410.3 - 1592.7) | 1.2 ms (0.7 - 3.6) | 0.6 ms (0.6 - 3.1) |
 
 ## Memory
 
@@ -158,7 +169,7 @@ Peak RSS of the publisher / subscriber process (MB): median, and maximum in pare
 | 4 busy-loop threads | 1 kHz | Zenoh | 150 | 148 | 149 | 152 | 161 | 258 |
 | 4 busy-loop threads | 10 kHz | UDS (variable-size) | 33.8 | 32.5 | 32.0 | 38.4 | 33.6 | 77.2 |
 | 4 busy-loop threads | 10 kHz | UDS (fixed-size) | 24.2 | 18.4 | 18.3 | 20.5 | 29.7 | 39.4 |
-| 4 busy-loop threads | 10 kHz | DDS (Fast DDS) | 55.7 | 62.3 | 55.8 | 64.3 | 71.4 | 235 |
+| 4 busy-loop threads | 10 kHz | DDS (Fast DDS) | 55.7 | 62.3 | 55.8 | 64.3 | 71.4 | 297 |
 | 4 busy-loop threads | 10 kHz | DDS (Cyclone DDS) | 57.1 | 54.9 | 58.7 | 59.5 | 79.0 | 184 |
 | 4 busy-loop threads | 10 kHz | Zenoh | 65.1 | 56.6 | 63.6 | 62.0 | 82.3 | 235 |
 
