@@ -21,22 +21,25 @@ All the numbers, the measurement setup and how to run the benchmark yourself are
 ## Concept
 
 **The problem.** For small messages between two processes on one machine, almost none of the latency is the copy
-of the data. It is the layers of the middleware on the receive side: after the kernel delivers the data, it passes
-through the DDS receive thread, RTPS processing, a wait set and the executor before the callback runs, and each
-hand-off between threads is a chance to wait behind other work. Shared memory and zero-copy only speed up the
-copy, so this remains.
+of the data. It is the layers of the middleware on the receive side, where a message is handed from thread to
+thread before the callback runs, and each hand-off is a chance to wait behind other work. Shared memory and
+zero-copy only speed up the copy, so this remains.
 
-**The solution.** `ros2_uds_ipc` keeps the ROS 2 message types and replaces only the transport with a Unix domain
-socket. A dedicated thread waits on the socket and invokes the callback itself, with no hand-off between threads:
+**The solution.** `ros2_uds_ipc` keeps the ROS 2 message types and addresses this in three ways:
 
-```
-DDS:           kernel -> DDS receive thread -> RTPS processing -> wait set -> executor -> callback
-ros2_uds_ipc:  kernel -> dedicated thread waiting in poll() -> callback
-```
+1. **Direct communication over a Unix domain socket.** A dedicated thread waits on the socket and invokes the
+   callback itself, with no hand-off between threads.
 
-In addition, messages made only of primitives and fixed-size arrays are sent as their in-memory bytes, without
-serialization. What remains is the time the kernel takes to wake the receive thread, which the library cannot remove but can
-shorten by giving that one thread a real-time priority (see [Real-time scheduling](#real-time-scheduling)).
+   ```
+   DDS:           kernel -> DDS receive thread -> RTPS processing -> wait set -> executor -> callback
+   ros2_uds_ipc:  kernel -> dedicated thread waiting in poll() -> callback
+   ```
+
+2. **`SCHED_FIFO` with one constructor argument.** The receive path is a single thread, so giving it a real-time
+   priority (and pinning it to a CPU) is enough to keep it from waiting behind other work. No middleware-specific
+   configuration is needed (see [Real-time scheduling](#real-time-scheduling)).
+3. **No serialization for fixed-size messages.** Messages made only of primitives and fixed-size arrays are sent
+   as their in-memory bytes and received straight into the message object.
 
 ## Features
 
