@@ -15,6 +15,7 @@ Latency from `publish()` to the subscriber callback between two processes at 1 k
 - **Under CPU load** (1 KB): the median is 12 - 33 µs for UDS, against 141 - 921 µs for DDS (Fast DDS / Cyclone DDS) and Zenoh.
 - **With a real-time priority** (256 B): the largest latency is 27 - 57 µs for UDS, against 95 - 145 µs, and UDS needs
   the priority on a single thread, which is a [constructor argument](#real-time-scheduling).
+- **Idle, with the CPU idle states limited to C1** (256 B): the median is 15 - 34 µs for UDS, against 144 - 272 µs.
 
 All the numbers, the measurement setup and how to run the benchmark yourself are in [docs/benchmark.md](docs/benchmark.md).
 

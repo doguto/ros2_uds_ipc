@@ -15,7 +15,10 @@ Median latency in µs (p99 in parentheses) from `publish()` to the subscriber ca
 | DDS (Cyclone DDS) | 205 (408) | 141 (1413) |
 | Zenoh | 358 (500) | 921 (3746) |
 
-The idle numbers are dominated by the CPU waking up from a deep idle state, which no transport avoids; under load the middleware layers of DDS and Zenoh are what remains.
+The idle numbers are dominated by the CPU waking up from a deep idle state; under load the middleware layers of
+DDS and Zenoh are what remains. With the idle states limited to C1 (256 B at 1 kHz), the idle latency of UDS drops
+to that under load, 15 µs (fixed-size) and 34 µs (variable-size), while DDS and Zenoh stay at 144 - 272 µs
+([details](#cpu-idle-states)).
 
 Under load, the tail is a matter of scheduling rather than of the transport: every so often a thread on the
 receive path waits behind other work, and the largest latency of a run is 2 - 5 ms for all of them. A real-time
@@ -306,8 +309,8 @@ for C1 on this CPU).
   as under load (12 µs), where the busy-loop threads keep the cores awake.
 - **Limiting to C1E already gives most of it**: 134 µs to 34 µs at 1 kHz, and at 100 Hz there is little left between
   C1E and C1.
-- **DDS and Zenoh gain less**, 144 - 272 µs at 1 kHz with C1, so the difference to UDS grows from about 1.5x to
-  about 10x (fixed-size) and 4x (variable-size). Why they do not come down further was not investigated; the CPU
+- **DDS and Zenoh gain less**, 144 - 272 µs at 1 kHz with C1, so the difference between Cyclone DDS, the fastest of them, and
+  UDS grows from 1.5x to about 10x (fixed-size) and from 1.1x to about 4x (variable-size). Why they do not come down further was not investigated; the CPU
   frequency, which is also lower when idle, was not controlled.
 - Limiting the idle states raises the power drawn when idle, which was not measured. On a machine dedicated to
   control it is a common setting, through PM QoS as above or through kernel parameters.
