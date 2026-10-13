@@ -9,12 +9,21 @@
 #include <string>
 
 #include <rclcpp/rclcpp.hpp>
+#include <rosidl_runtime_cpp/traits.hpp>
 #include <std_msgs/msg/u_int8_multi_array.hpp>
+
+#include "ros2_uds_ipc_benchmark/msg/fixed1024.hpp"
+#include "ros2_uds_ipc_benchmark/msg/fixed16384.hpp"
+#include "ros2_uds_ipc_benchmark/msg/fixed256.hpp"
+#include "ros2_uds_ipc_benchmark/msg/fixed4096.hpp"
+#include "ros2_uds_ipc_benchmark/msg/fixed64.hpp"
+#include "ros2_uds_ipc_benchmark/msg/fixed65536.hpp"
 
 // Shared by latency_publisher and latency_subscriber. Each message carries its send time
 // (steady clock, shared by all processes on the host) in the first bytes of the payload.
 namespace latency_benchmark
 {
+  // Variable-size message, serialized to CDR on every transport.
   using Message = std_msgs::msg::UInt8MultiArray;
 
   // Special values of the stamp at the head of the payload.
@@ -57,7 +66,7 @@ namespace latency_benchmark
 
   struct Options
   {
-    std::string transport;  // "uds", "uds_reliable" or "dds"
+    std::string transport;  // "uds", "uds_reliable", "uds_reliable_fixed" or "dds"
     std::string socket_path;
     size_t payload_bytes;
     size_t count;
@@ -74,8 +83,10 @@ namespace latency_benchmark
     const int64_t count = node.declare_parameter<int64_t>("count", 10000);
     options.rate_hz = node.declare_parameter<double>("rate_hz", 1000.0);
 
-    if (options.transport != "uds" && options.transport != "uds_reliable" && options.transport != "dds") {
-      throw std::invalid_argument("transport must be 'uds', 'uds_reliable' or 'dds'");
+    if (options.transport != "uds" && options.transport != "uds_reliable" && options.transport != "uds_reliable_fixed" &&
+      options.transport != "dds")
+    {
+      throw std::invalid_argument("transport must be 'uds', 'uds_reliable', 'uds_reliable_fixed' or 'dds'");
     }
     if (payload_bytes < static_cast<int64_t>(sizeof(int64_t)) || count <= 0 || options.rate_hz < 0.0) {
       throw std::invalid_argument("payload_bytes must be >= 8, count > 0 and rate_hz >= 0");
@@ -115,9 +126,50 @@ namespace latency_benchmark
     return 0;
   }
 
-  inline void set_stamp(Message & msg, int64_t stamp)
+  /// Calls `run(MessageT{})` with the fixed-size message type of exactly `payload_bytes` bytes.
+  /// Throws std::invalid_argument if there is none.
+  template <typename RunT>
+  inline int dispatch_fixed(size_t payload_bytes, RunT && run)
+  {
+    using namespace ros2_uds_ipc_benchmark::msg;  // NOLINT(build/namespaces)
+    switch (payload_bytes) {
+      case 64: return run(Fixed64{});
+      case 256: return run(Fixed256{});
+      case 1024: return run(Fixed1024{});
+      case 4096: return run(Fixed4096{});
+      case 16384: return run(Fixed16384{});
+      case 65536: return run(Fixed65536{});
+      default:
+        throw std::invalid_argument(
+          "uds_reliable_fixed supports payload_bytes of 64, 256, 1024, 4096, 16384 or 65536");
+    }
+  }
+
+  /// Zero-fills the payload; a variable-size message is resized to `payload_bytes`.
+  template <typename MessageT>
+  inline void init_payload(MessageT & msg, size_t payload_bytes)
+  {
+    if constexpr (rosidl_generator_traits::has_fixed_size<MessageT>::value) {
+      msg.data.fill(0);
+    } else {
+      msg.data.assign(payload_bytes, 0);
+    }
+  }
+
+  template <typename MessageT>
+  inline void set_stamp(MessageT & msg, int64_t stamp)
   {
     std::memcpy(msg.data.data(), &stamp, sizeof(stamp));
+  }
+
+  /// Puts the end marker at the head of the payload. A variable-size message shrinks to the marker.
+  template <typename MessageT>
+  inline void set_end_marker(MessageT & msg, const EndMarker & end_marker)
+  {
+    if constexpr (!rosidl_generator_traits::has_fixed_size<MessageT>::value) {
+      msg.data.resize(sizeof(end_marker));
+    }
+    std::memcpy(msg.data.data(), &end_marker, sizeof(end_marker));
   }
 
   inline rclcpp::QoS dds_qos()

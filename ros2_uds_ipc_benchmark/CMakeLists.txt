@@ -19,6 +19,18 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(ros2_uds_ipc REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+# Fixed-size messages (one per payload size) to measure the raw-copy path of ros2_uds_ipc.
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/Fixed64.msg"
+  "msg/Fixed256.msg"
+  "msg/Fixed1024.msg"
+  "msg/Fixed4096.msg"
+  "msg/Fixed16384.msg"
+  "msg/Fixed65536.msg"
+)
+rosidl_get_typesupport_target(fixed_messages ${PROJECT_NAME} rosidl_typesupport_cpp)
 
 foreach(target latency_publisher latency_subscriber)
   add_executable(${target} src/${target}.cpp)
@@ -27,6 +39,7 @@ foreach(target latency_publisher latency_subscriber)
     rclcpp::rclcpp
     ros2_uds_ipc::ros2_uds_ipc
     ${std_msgs_TARGETS}
+    ${fixed_messages}
   )
 endforeach()
 
@@ -48,5 +61,7 @@ install(
   DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
 )
+
+ament_export_dependencies(rosidl_default_runtime)
 
 ament_package()

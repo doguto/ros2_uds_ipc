@@ -5,6 +5,50 @@
 `rclcpp` のメッセージ型を、DDS を経由せずに Unix ドメインソケット (`AF_UNIX` / `SOCK_SEQPACKET`) 上で
 そのまま publish / subscribe するための、ROS 2 向けの薄い C++ ライブラリです。
 
+## Benchmark
+
+ひと目で: 2 プロセス間、1 KB のペイロード、1 kHz での、`publish()` から subscriber のコールバックまでのレイテンシ中央値 (µs、括弧内は p99) です。
+
+| 方式 | 無負荷 | busy loop 4 本 |
+|---|---|---|
+| UDS (fixed-size) | 120 (179) | 11.8 (37.2) |
+| UDS (variable-size) | 182 (277) | 33.2 (585) |
+| DDS (Fast DDS) | 236 (467) | 251 (2737) |
+| DDS (Cyclone DDS) | 205 (408) | 141 (1413) |
+| Zenoh | 358 (500) | 921 (3746) |
+
+無負荷の数値は、CPU が深いアイドル状態から復帰する時間が支配的で、どの方式でも避けられません。負荷時には、DDS と Zenoh のミドルウェア層の分が差として残ります。
+
+`ros2_uds_ipc_benchmark` パッケージで計測しました。publisher ノードと subscriber ノードを別プロセスで起動し、
+ペイロード 6 種を、無負荷と、busy loop スレッド 4 本と CPU を奪い合う状態の両方で測っています。
+
+- **UDS (variable-size)** — `std_msgs/UInt8MultiArray` を `publish(msg, 1s)` で。CDR にシリアライズします。
+  受信キューが満杯のとき、メッセージを捨てずに subscriber を待ちます。
+- **UDS (fixed-size)** — プリミティブと固定長配列だけのメッセージで同様に送ります。シリアライズせずに送信します。
+- **DDS (Fast DDS)** / **DDS (Cyclone DDS)** — 通常の `rclcpp` publisher / subscription を `rmw_fastrtps_cpp` /
+  `rmw_cyclonedds_cpp` で。reliable + keep-all、トランスポートはデフォルト
+- **Zenoh** — 同じ構成を `rmw_zenoh_cpp` で。ローカルの `rmw_zenohd` ルーター経由
+
+環境: Intel Core i5-3427U (4 スレッド)、Linux 7.0.0-31-generic、ROS 2 Jazzy。
+グラフは各条件 5 回の実行の中央値です。CPU 固定やリアルタイムスケジューリングは行っていません。
+
+他の送信レート・メッセージの取りこぼし・接続時間・メモリ・生データ・自分で計測する手順は
+[docs/benchmark_ja.md](docs/benchmark_ja.md) にあります。
+
+### レイテンシ
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark/latency_1khz-dark.svg">
+  <img src="docs/benchmark/latency_1khz.svg" alt="1 kHz でのレイテンシ中央値と p99 (ペイロードサイズ別、無負荷 / CPU 負荷あり)">
+</picture>
+
+### CPU 使用量
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark/cpu_per_message-dark.svg">
+  <img src="docs/benchmark/cpu_per_message.svg" alt="10 kHz での 1 メッセージあたり CPU 時間 (publisher と subscriber の合計)">
+</picture>
+
 ## Concept
 
 DDS には discovery、QoS マッチング、RTPS プロトコル層が付いてきます。同一マシン上の 2 プロセス間で
@@ -45,6 +89,9 @@ ros2_uds_ipc:  カーネル -> poll() で待つ専用スレッド -> コール�
 
 - **任意の rosidl メッセージ型** — メッセージを CDR に一度シリアライズし、1 回の `send()` で送ります。
   可変長メッセージも扱えます。
+- **固定長メッセージはシリアライズしません** — プリミティブと固定長配列だけで構成されたメッセージ (例: `Float64[7]`) は、
+  メモリ上のバイト列をそのまま送り、メッセージオブジェクトに直接受信します。送受信の両側が同じメッセージ定義で
+  ビルドされている必要がありますが、同一マシンでは満たされます。
 - **到達保証・境界保持** — `SOCK_SEQPACKET` は接続指向でデータグラム境界を保持します
   (1 回の `send` = 1 回の `recv`)。手動のフレーミングは不要で、ベストエフォートではありません。
 - **デフォルトでは送信側をブロックしない** — `publish()` はノンブロッキングで、未接続または subscriber の
@@ -146,37 +193,6 @@ rosbag から見えるようになります。ミラーされたメッセージ�
 auto mirror = uds_ipc::create_uds_mirror<sensor_msgs::msg::JointState>(*node, "joint_command");
 uds_ipc::UdsPublisher<sensor_msgs::msg::JointState> publisher("/run/my_robot/joint_command.sock", mirror);
 ```
-
-## Benchmark
-
-`ros2_uds_ipc_benchmark` パッケージで計測しました。publisher ノードと subscriber ノードを別プロセスで起動し、
-ペイロード 6 種を、無負荷と、busy loop スレッド 4 本と CPU を奪い合う状態の両方で測っています。
-
-- **UDS (send timeout)** — `publish(msg, 1s)`。受信キューが満杯のとき、メッセージを捨てずに subscriber を待ちます。
-  満杯にならないレートでは、ノンブロッキングの `publish(msg)` も同じ性能です。
-- **DDS (Fast DDS)** / **DDS (Cyclone DDS)** — 通常の `rclcpp` publisher / subscription を `rmw_fastrtps_cpp` /
-  `rmw_cyclonedds_cpp` で。reliable + keep-all、トランスポートはデフォルト
-- **Zenoh** — 同じ構成を `rmw_zenoh_cpp` で。ローカルの `rmw_zenohd` ルーター経由
-
-環境: Intel Core i5-3427U (4 スレッド)、Linux 7.0.0-31-generic、ROS 2 Jazzy。
-グラフは各条件 5 回の実行の中央値です。CPU 固定やリアルタイムスケジューリングは行っていません。
-
-他の送信レート・メッセージの取りこぼし・接続時間・メモリ・生データ・自分で計測する手順は
-[docs/benchmark_ja.md](docs/benchmark_ja.md) にあります。
-
-### レイテンシ
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark/latency_1khz-dark.svg">
-  <img src="docs/benchmark/latency_1khz.svg" alt="1 kHz でのレイテンシ中央値と p99 (ペイロードサイズ別、無負荷 / CPU 負荷あり)">
-</picture>
-
-### CPU 使用量
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark/cpu_per_message-dark.svg">
-  <img src="docs/benchmark/cpu_per_message.svg" alt="10 kHz での 1 メッセージあたり CPU 時間 (publisher と subscriber の合計)">
-</picture>
 
 ## Tech Stack
 

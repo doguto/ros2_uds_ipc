@@ -32,7 +32,8 @@ namespace
   public:
     explicit LatencyRecorder(size_t expected_count) { samples_ns_.reserve(expected_count); }
 
-    void on_message(const Message & msg)
+    template <typename MessageT>
+    void on_message(const MessageT & msg)
     {
       const int64_t received_ns = now_ns();
       if (msg.data.size() < sizeof(int64_t)) return;
@@ -196,15 +197,24 @@ namespace
     const int64_t load_threads = node->declare_parameter<int64_t>("load_threads", 0);
 
     LatencyRecorder recorder(options.count);
-    const auto callback = [&recorder](const Message & msg) { recorder.on_message(msg); };
+    // Generic, for the UDS subscribers of the different message types. rclcpp needs a concrete one.
+    const auto callback = [&recorder](const auto & msg) { recorder.on_message(msg); };
+    const auto dds_callback = [&recorder](const Message & msg) { recorder.on_message(msg); };
 
     bool completed = false;
-    if (options.transport != "dds") {
+    if (options.transport == "uds_reliable_fixed") {
+      dispatch_fixed(options.payload_bytes, [&](auto msg) {
+        // Received straight into the message; there is no serialized buffer.
+        uds_ipc::UdsSubscriber<decltype(msg)> subscriber(options.socket_path, callback);
+        completed = recorder.wait_done();
+        return 0;
+      });
+    } else if (options.transport != "dds") {
       // Headroom for the CDR header and the MultiArray layout.
       uds_ipc::UdsSubscriber<Message> subscriber(options.socket_path, callback, options.payload_bytes + 1024);
       completed = recorder.wait_done();
     } else {
-      auto subscription = node->create_subscription<Message>(kTopic, dds_qos(), callback);
+      auto subscription = node->create_subscription<Message>(kTopic, dds_qos(), dds_callback);
       rclcpp::executors::SingleThreadedExecutor executor;
       executor.add_node(node);
       std::thread spin_thread([&executor] { executor.spin(); });

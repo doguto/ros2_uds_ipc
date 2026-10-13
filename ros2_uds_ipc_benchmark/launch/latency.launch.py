@@ -15,9 +15,11 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     arguments = [
-        DeclareLaunchArgument('transport', default_value='uds', choices=['uds', 'uds_reliable', 'dds'],
+        DeclareLaunchArgument('transport', default_value='uds', choices=['uds', 'uds_reliable', 'uds_reliable_fixed', 'dds'],
                               description='Transport to measure. uds_reliable: publish() waits for the '
-                                          'subscriber instead of dropping when its queue is full'),
+                                          'subscriber instead of dropping when its queue is full. '
+                                          'uds_reliable_fixed: the same with a fixed-size message, sent '
+                                          'without serialization (payload_bytes 64 ... 65536, powers of 4)'),
         DeclareLaunchArgument('payload_bytes', default_value='64',
                               description='Payload size in bytes (at least 8)'),
         DeclareLaunchArgument('count', default_value='10000',

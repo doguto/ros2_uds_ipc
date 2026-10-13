@@ -21,7 +21,7 @@ namespace
 
   /// Publishes warm-up, measured and end-marker messages through `publish`, which returns false on failure.
   /// `ready` must return true once the subscriber is reachable. `created_ns` is when the publisher was created.
-  template <typename PublishT, typename ReadyT>
+  template <typename MessageT, typename PublishT, typename ReadyT>
   int publish_all(
     rclcpp::Node & node,
     const Options & options,
@@ -31,8 +31,8 @@ namespace
   )
   {
     EndMarker end_marker;
-    Message msg;
-    msg.data.assign(options.payload_bytes, 0);
+    MessageT msg;
+    init_payload(msg, options.payload_bytes);
     set_stamp(msg, kWarmupStamp);
 
     const auto start_deadline = std::chrono::steady_clock::now() + kStartTimeout;
@@ -77,8 +77,7 @@ namespace
     end_marker.max_rss_kb = max_rss_kb();
 
     // The end marker must arrive, so retry while the send buffer is full.
-    msg.data.resize(sizeof(end_marker));
-    std::memcpy(msg.data.data(), &end_marker, sizeof(end_marker));
+    set_end_marker(msg, end_marker);
     const auto end_deadline = std::chrono::steady_clock::now() + kStartTimeout;
     while (!publish(msg)) {
       if (!rclcpp::ok() || std::chrono::steady_clock::now() > end_deadline) {
@@ -94,22 +93,33 @@ namespace
     return 0;
   }
 
+  template <typename MessageT>
+  int run_uds(const rclcpp::Node::SharedPtr & node, const Options & options, int64_t created_ns)
+  {
+    const std::chrono::nanoseconds send_timeout =
+      options.transport != "uds" ? kReliableSendTimeout : std::chrono::seconds(0);
+    uds_ipc::UdsPublisher<MessageT> publisher(options.socket_path);
+    const auto publish = [&](const MessageT & msg) { return publisher.publish(msg, send_timeout); };
+    // publish() connects lazily and fails until the subscriber is listening.
+    return publish_all<MessageT>(*node, options, created_ns, publish, publish);
+  }
+
   int run(const rclcpp::Node::SharedPtr & node)
   {
     const Options options = declare_options(*node);
 
     const int64_t created_ns = now_ns();
+    if (options.transport == "uds_reliable_fixed") {
+      return dispatch_fixed(options.payload_bytes, [&](auto msg) {
+        return run_uds<decltype(msg)>(node, options, created_ns);
+      });
+    }
     if (options.transport != "dds") {
-      const std::chrono::nanoseconds send_timeout =
-        options.transport == "uds_reliable" ? kReliableSendTimeout : std::chrono::seconds(0);
-      uds_ipc::UdsPublisher<Message> publisher(options.socket_path);
-      const auto publish = [&](const Message & msg) { return publisher.publish(msg, send_timeout); };
-      // publish() connects lazily and fails until the subscriber is listening.
-      return publish_all(*node, options, created_ns, publish, publish);
+      return run_uds<Message>(node, options, created_ns);
     }
 
     auto publisher = node->create_publisher<Message>(kTopic, dds_qos());
-    const int result = publish_all(
+    const int result = publish_all<Message>(
       *node, options, created_ns,
       [&publisher](const Message & msg) {
         publisher->publish(msg);

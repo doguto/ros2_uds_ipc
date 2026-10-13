@@ -5,6 +5,51 @@
 A thin C++ library for ROS 2 that publishes and subscribes `rclcpp` message types as-is over Unix domain
 sockets (`AF_UNIX` / `SOCK_SEQPACKET`), bypassing DDS.
 
+## Benchmark
+
+At a glance: median latency in µs (p99 in parentheses) from `publish()` to the subscriber callback, for a 1 KB payload at 1 kHz between two processes.
+
+| Transport | Idle | 4 busy-loop threads |
+|---|---|---|
+| UDS (fixed-size) | 120 (179) | 11.8 (37.2) |
+| UDS (variable-size) | 182 (277) | 33.2 (585) |
+| DDS (Fast DDS) | 236 (467) | 251 (2737) |
+| DDS (Cyclone DDS) | 205 (408) | 141 (1413) |
+| Zenoh | 358 (500) | 921 (3746) |
+
+The idle numbers are dominated by the CPU waking up from a deep idle state, which no transport avoids; under load the middleware layers of DDS and Zenoh are what remains.
+
+Measured with the `ros2_uds_ipc_benchmark` package: a publisher node and a subscriber node in separate
+processes, 6 payload sizes, idle and with 4 busy-loop threads competing for the CPU.
+
+- **UDS (variable-size)** — `publish(msg, 1s)` with `std_msgs/UInt8MultiArray`, serialized to CDR. It waits for the
+  subscriber instead of dropping a message when its queue is full.
+- **UDS (fixed-size)** — the same with a message made only of primitives and a fixed-size array, which is sent
+  without serialization.
+- **DDS (Fast DDS)** / **DDS (Cyclone DDS)** — a plain `rclcpp` publisher / subscription with `rmw_fastrtps_cpp` /
+  `rmw_cyclonedds_cpp`, reliable + keep-all, default transport
+- **Zenoh** — the same with `rmw_zenoh_cpp`, through a local `rmw_zenohd` router
+
+Environment: Intel Core i5-3427U (4 threads), Linux 7.0.0-31-generic, ROS 2 Jazzy.
+The charts show the median of 5 runs per condition, measured without CPU pinning or real-time scheduling.
+
+Other publish rates, message loss, time to connect, memory, the raw data and how to run the benchmark
+yourself are in [docs/benchmark.md](docs/benchmark.md).
+
+### Latency
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark/latency_1khz-dark.svg">
+  <img src="docs/benchmark/latency_1khz.svg" alt="Median and p99 latency at 1 kHz by payload size, idle and under CPU load">
+</picture>
+
+### CPU usage
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark/cpu_per_message-dark.svg">
+  <img src="docs/benchmark/cpu_per_message.svg" alt="CPU time per message at 10 kHz, publisher and subscriber combined">
+</picture>
+
 ## Concept
 
 DDS brings discovery, QoS matching and the RTPS protocol layer. For an event-driven path between two
@@ -47,6 +92,9 @@ ros2_uds_ipc:  kernel -> dedicated thread waiting in poll() -> callback
 
 - **Any rosidl message type** — a message is serialized to CDR once and sent with a single `send()`.
   Variable-length messages work.
+- **No serialization for fixed-size messages** — a message made only of primitives and fixed-size arrays (for
+  example `Float64[7]`) is sent as its in-memory bytes and received straight into the message object. This needs
+  both ends to be built against the same message definition, which holds on one machine.
 - **Reliable, boundary-preserving** — `SOCK_SEQPACKET` is connection-oriented and keeps datagram
   boundaries (one `send` = one `recv`), so there is no manual framing and delivery is not best-effort.
 - **Never blocks the sender by default** — `publish()` is non-blocking and returns `false` when the peer is
@@ -150,37 +198,6 @@ first) if DDS cannot keep up, so use the mirror for observation only.
 auto mirror = uds_ipc::create_uds_mirror<sensor_msgs::msg::JointState>(*node, "joint_command");
 uds_ipc::UdsPublisher<sensor_msgs::msg::JointState> publisher("/run/my_robot/joint_command.sock", mirror);
 ```
-
-## Benchmark
-
-Measured with the `ros2_uds_ipc_benchmark` package: a publisher node and a subscriber node in separate
-processes, 6 payload sizes, idle and with 4 busy-loop threads competing for the CPU.
-
-- **UDS (send timeout)** — `publish(msg, 1s)`, which waits for the subscriber instead of dropping a message
-  when its queue is full. Below the rates where that happens, the non-blocking `publish(msg)` performs the same.
-- **DDS (Fast DDS)** / **DDS (Cyclone DDS)** — a plain `rclcpp` publisher / subscription with `rmw_fastrtps_cpp` /
-  `rmw_cyclonedds_cpp`, reliable + keep-all, default transport
-- **Zenoh** — the same with `rmw_zenoh_cpp`, through a local `rmw_zenohd` router
-
-Environment: Intel Core i5-3427U (4 threads), Linux 7.0.0-31-generic, ROS 2 Jazzy.
-The charts show the median of 5 runs per condition, measured without CPU pinning or real-time scheduling.
-
-Other publish rates, message loss, time to connect, memory, the raw data and how to run the benchmark
-yourself are in [docs/benchmark.md](docs/benchmark.md).
-
-### Latency
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark/latency_1khz-dark.svg">
-  <img src="docs/benchmark/latency_1khz.svg" alt="Median and p99 latency at 1 kHz by payload size, idle and under CPU load">
-</picture>
-
-### CPU usage
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark/cpu_per_message-dark.svg">
-  <img src="docs/benchmark/cpu_per_message.svg" alt="CPU time per message at 10 kHz, publisher and subscriber combined">
-</picture>
 
 ## Tech Stack
 

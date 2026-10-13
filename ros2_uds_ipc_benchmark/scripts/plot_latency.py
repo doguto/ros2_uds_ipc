@@ -20,8 +20,9 @@ from matplotlib.ticker import FuncFormatter  # noqa: E402
 
 # Series in a fixed order, so that a series keeps its color whichever other series are present.
 SERIES = [
-    ('uds', 'UDS'),
-    ('uds_reliable', 'UDS (send timeout)'),
+    ('uds', 'UDS (non-blocking)'),
+    ('uds_reliable', 'UDS (variable-size)'),
+    ('uds_reliable_fixed', 'UDS (fixed-size)'),
     ('rmw_fastrtps_cpp', 'DDS (Fast DDS)'),
     ('rmw_cyclonedds_cpp', 'DDS (Cyclone DDS)'),
     ('rmw_connextdds', 'DDS (Connext)'),
@@ -32,12 +33,12 @@ THEMES = {
     'light': {
         'surface': '#fcfcfb', 'primary': '#0b0b0b', 'secondary': '#52514e', 'muted': '#898781',
         'grid': '#e1e0d9', 'axis': '#c3c2b7',
-        'series': ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300'],
+        'series': ['#2a78d6', '#eb6834', '#7b4fd1', '#1baf7a', '#eda100', '#e87ba4', '#008300'],
     },
     'dark': {
         'surface': '#1a1a19', 'primary': '#f0efec', 'secondary': '#c3c2b7', 'muted': '#898781',
         'grid': '#2c2c2a', 'axis': '#383835',
-        'series': ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300'],
+        'series': ['#3987e5', '#d95926', '#9a74e8', '#199e70', '#c98500', '#d55181', '#008300'],
     },
 }
 
@@ -174,7 +175,7 @@ def main():
     parser.add_argument('output_dir')
     parser.add_argument(
         '--exclude', nargs='+', default=[], metavar='SERIES',
-        help='series to leave out: uds, uds_reliable, or an RMW implementation name')
+        help='series to leave out: uds, uds_reliable, uds_reliable_fixed, or an RMW implementation name')
     args = parser.parse_args()
     rows = [r for r in load_rows(args.result_csv) if r['series'] not in args.exclude]
     output_dir = Path(args.output_dir)

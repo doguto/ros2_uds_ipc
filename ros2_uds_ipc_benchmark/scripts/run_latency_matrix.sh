@@ -6,6 +6,7 @@
 # Environment:
 #   SIZES  Payload sizes in bytes
 #   RATES  Publish rates in Hz, 0 for no throttling
+#   TRANSPORTS  UDS transports to measure (default: uds_reliable uds_reliable_fixed; also: uds)
 #   COUNT  Number of measured messages per run (default: 10 s worth at the rate, at most 10000)
 #   LOADS  Numbers of busy-loop threads (default: idle and all cores)
 #   REPEAT How many times to run the whole matrix (default: 1). plot_latency.py takes the median per condition
@@ -20,6 +21,7 @@ SIZES=${SIZES:-"64 256 1024 4096 16384 65536"}
 RATES=${RATES:-"100 1000 10000 0"}
 LOADS=${LOADS:-"0 $(nproc)"}
 REPEAT=${REPEAT:-1}
+TRANSPORTS=${TRANSPORTS:-"uds_reliable uds_reliable_fixed"}
 
 if [ -z "${RMWS:-}" ]; then
   RMWS=""
@@ -45,7 +47,7 @@ run() {  # run LOAD TRANSPORT RATE SIZE
 
 for _ in $(seq "$REPEAT"); do
 for load in $LOADS; do
-  for transport in uds uds_reliable; do
+  for transport in $TRANSPORTS; do
     for rate in $RATES; do
       for size in $SIZES; do
         run "$load" "$transport" "$rate" "$size"
