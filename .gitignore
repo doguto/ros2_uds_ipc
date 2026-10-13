@@ -2,3 +2,5 @@ build/
 install/
 log/
 benchmark_result/
+
+**/__pycache__/*
