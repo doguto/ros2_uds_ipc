@@ -19,6 +19,21 @@ At a glance: median latency in µs (p99 in parentheses) from `publish()` to the 
 
 The idle numbers are dominated by the CPU waking up from a deep idle state, which no transport avoids; under load the middleware layers of DDS and Zenoh are what remains.
 
+Under load, the tail is a matter of scheduling rather than of the transport: every so often a thread on the
+receive path waits behind other work, and the largest latency of a run is 2 - 5 ms for all of them. A real-time
+priority removes it. With one (256 B at 1 kHz), the largest latency was:
+
+| Transport | Largest latency | What was made real-time |
+|---|---|---|
+| UDS (fixed-size) | 27 µs | The receive thread and the publishing thread |
+| UDS (variable-size) | 57 µs | The receive thread and the publishing thread |
+| DDS (Cyclone DDS) | 95 µs | The whole publisher and subscriber processes |
+| DDS (Fast DDS) | 115 µs | The whole publisher and subscriber processes |
+| Zenoh | 145 µs | The whole publisher and subscriber processes |
+
+UDS stays ahead by roughly 2x (variable-size) to 5x (fixed-size), and needs the priority on a single thread, which is a
+[constructor argument](#real-time-scheduling) ([details](docs/benchmark.md#real-time-scheduling)).
+
 Measured with the `ros2_uds_ipc_benchmark` package: a publisher node and a subscriber node in separate
 processes, 6 payload sizes, idle and with 4 busy-loop threads competing for the CPU.
 
@@ -81,10 +96,12 @@ ros2_uds_ipc:  kernel -> dedicated thread waiting in poll() -> callback
 - **Stage 4 is skipped entirely.** The receive thread woken by the kernel deserializes the message and
   invokes the callback itself. There is no hand-off between threads.
 - **Stage 2 is only a copy through the kernel**, which is negligible for small messages.
-- **Stage 1 remains.** CDR is used to support any rosidl type, including variable-length ones. DDS pays
+- **Stage 1 is skipped for fixed-size messages.** Messages made only of primitives and fixed-size arrays are sent
+  as their in-memory bytes. For any other rosidl type, including variable-length ones, CDR is used, and DDS pays
   the same cost.
-- **Stage 3 remains.** It is determined by the scheduler and CPU power states, and is addressed outside
-  the library (real-time scheduling, CPU pinning and so on).
+- **Stage 3 remains.** It is determined by the scheduler and CPU power states. The library cannot remove it,
+  but a subscriber can opt in to a real-time priority and CPU pinning for its receive thread, so that it is not
+  kept waiting behind other work (see [Real-time scheduling](#real-time-scheduling)).
 
 ### Features
 
@@ -198,6 +215,40 @@ first) if DDS cannot keep up, so use the mirror for observation only.
 auto mirror = uds_ipc::create_uds_mirror<sensor_msgs::msg::JointState>(*node, "joint_command");
 uds_ipc::UdsPublisher<sensor_msgs::msg::JointState> publisher("/run/my_robot/joint_command.sock", mirror);
 ```
+
+### Real-time scheduling
+
+By default the receive thread is an ordinary thread. When the CPU is busy with other work (image processing,
+planning), it waits its turn like any other, which shows up as a tail of late callbacks. For the few
+subscribers that have a deadline, you can run the receive thread as `SCHED_FIFO` and optionally pin it to a CPU:
+
+```cpp
+uds_ipc::Scheduling scheduling;
+scheduling.rt_priority = 40;  // 1 - 49, 0 (default) leaves it to the OS
+scheduling.cpu = -1;          // a CPU number to pin to, -1 for any
+scheduling.require = false;   // true: throw instead of warning when the OS refuses
+
+uds_ipc::UdsSubscriber<sensor_msgs::msg::JointState> subscriber(
+  "/run/my_robot/joint_command.sock", callback, 65536, nullptr, scheduling);
+if (!subscriber.scheduling_applied()) { /* the OS refused; running with the default scheduling */ }
+```
+
+| Do | Don't |
+|---|---|
+| Use it only for the one or two subscribers that have a deadline (e.g. motor commands) | Put every subscriber on `SCHED_FIFO` |
+| Keep the callback short: copy the data and return | Block, allocate or take a lock that normal threads also take (priority inversion) |
+| Use 30 - 49 | Expect more from a higher number. Priorities of 50 and above are rejected: Linux runs its interrupt handler threads at 50, and the receive thread must never get ahead of the kernel |
+| Pin to a CPU only if it is kept free of other work (`isolcpus`, cpuset) | Pin to a shared core |
+
+The OS must allow it, otherwise a warning is logged and the thread keeps the default scheduling
+(`require = true` makes the constructor throw instead). Either:
+
+- add `@realtime - rtprio 49` and `@realtime - memlock unlimited` to `/etc/security/limits.d/99-realtime.conf`,
+  and put the user in the `realtime` group (log in again), or
+- `LimitRTPRIO=49` in the systemd unit, or `--cap-add=SYS_NICE --ulimit rtprio=49` in Docker.
+
+The publishing thread is yours: if it runs the control loop, give it a real-time priority the same way
+(`pthread_setschedparam`). `mlockall(MCL_CURRENT | MCL_FUTURE)` at start-up avoids page faults on that path.
 
 ## Tech Stack
 

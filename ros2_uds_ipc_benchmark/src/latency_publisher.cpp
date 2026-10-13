@@ -108,6 +108,10 @@ namespace
   {
     const Options options = declare_options(*node);
 
+    if (options.rt_priority > 0 && options.transport != "dds") {
+      set_realtime(options.rt_priority);  // dds: the whole process already has it (see latency.launch.py).
+    }
+
     const int64_t created_ns = now_ns();
     if (options.transport == "uds_reliable_fixed") {
       return dispatch_fixed(options.payload_bytes, [&](auto msg) {

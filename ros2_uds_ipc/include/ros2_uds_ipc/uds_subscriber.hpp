@@ -14,6 +14,7 @@
 
 #include "ros2_uds_ipc/detail/raw_copy.hpp"
 #include "ros2_uds_ipc/detail/uds_socket.hpp"
+#include "ros2_uds_ipc/scheduling.hpp"
 #include "ros2_uds_ipc/uds_mirror.hpp"
 
 namespace uds_ipc
@@ -28,21 +29,27 @@ namespace uds_ipc
 
     // max_message_size: serialized messages larger than this are truncated. Unused for fixed-size messages.
     // mirror: a publisher from create_uds_mirror(). If set, received messages are also forwarded to DDS.
-    // Throws std::runtime_error if the socket cannot be set up.
+    // scheduling: real-time priority and CPU pinning of the receive thread (see Scheduling). Off by default.
+    // Throws std::runtime_error if the socket cannot be set up, or if the OS refuses scheduling.require.
+    // Throws std::invalid_argument if scheduling is out of range.
     UdsSubscriber(
       std::string path,
       Callback callback,
       size_t max_message_size = 65536,
-      rclcpp::GenericPublisher::SharedPtr mirror = nullptr
+      rclcpp::GenericPublisher::SharedPtr mirror = nullptr,
+      Scheduling scheduling = {}
     )
     : callback_(std::move(callback)),
       mirror_(mirror ? std::make_unique<UdsMirrorWorker>(std::move(mirror)) : nullptr),
       serialized_(detail::is_raw_copyable<MessageT> ? 0 : max_message_size),
       socket_(
         std::move(path), receive_buffer(), receive_capacity(),
-        [this](size_t length) { on_receive(length); }
+        [this](size_t length) { on_receive(length); }, scheduling
       )
     {}
+
+    /// Whether the requested scheduling is in effect (also true when none was requested).
+    bool scheduling_applied() const { return socket_.scheduling_applied(); }
 
     UdsSubscriber(const UdsSubscriber &) = delete;
     UdsSubscriber & operator=(const UdsSubscriber &) = delete;

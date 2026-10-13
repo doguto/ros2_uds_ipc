@@ -1,9 +1,12 @@
+#include <sched.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -235,4 +238,133 @@ TEST(UdsPubSub, ReconnectsAfterSubscriberRestart)
   ASSERT_TRUE(publisher.publish(msg));
   std::unique_lock<std::mutex> lock(mutex);
   EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return received == 2; }));
+}
+
+// Receive thread scheduling
+
+namespace
+{
+  /// Policy and CPU of the thread that invoked the callback, for the first message received.
+  struct CallbackThread
+  {
+    int policy = -1;
+    int priority = -1;
+    int cpu = -1;
+  };
+
+  /// Publishes one message to a subscriber created with `scheduling` and returns what the callback thread looked like.
+  CallbackThread run_with_scheduling(const std::string & path, const uds_ipc::Scheduling & scheduling, bool * applied)
+  {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    CallbackThread seen;
+    uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
+      path, [&](const std_msgs::msg::String &) {
+        std::lock_guard<std::mutex> lock(mutex);
+        sched_param param{};
+        seen.policy = ::sched_getscheduler(0);
+        ::sched_getparam(0, &param);
+        seen.priority = param.sched_priority;
+        seen.cpu = ::sched_getcpu();
+        done = true;
+        cv.notify_one();
+      }, 65536, nullptr, scheduling);
+    if (applied) *applied = subscriber.scheduling_applied();
+
+    uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+    std_msgs::msg::String msg;
+    msg.data = "x";
+    EXPECT_TRUE(publisher.publish(msg));
+    std::unique_lock<std::mutex> lock(mutex);
+    EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return done; }));
+    return seen;
+  }
+
+  /// True if an unprivileged process is not allowed to use SCHED_FIFO.
+  bool rt_is_denied()
+  {
+    rlimit limit{};
+    ::getrlimit(RLIMIT_RTPRIO, &limit);
+    return ::geteuid() != 0 && limit.rlim_cur == 0;
+  }
+}  // namespace
+
+TEST(UdsScheduling, DefaultLeavesTheThreadAlone)
+{
+  bool applied = false;
+  const auto seen = run_with_scheduling(socket_path("sched_default.sock"), {}, &applied);
+  EXPECT_TRUE(applied);
+  EXPECT_NE(seen.policy, SCHED_FIFO);
+}
+
+TEST(UdsScheduling, RejectsPrioritiesAboveTheLimit)
+{
+  using Subscriber = uds_ipc::UdsSubscriber<std_msgs::msg::String>;
+  const auto callback = [](const std_msgs::msg::String &) {};
+  uds_ipc::Scheduling scheduling;
+
+  scheduling.rt_priority = uds_ipc::Scheduling::kMaxRtPriority + 1;
+  EXPECT_THROW(Subscriber(socket_path("sched_above.sock"), callback, 65536, nullptr, scheduling), std::invalid_argument);
+  scheduling.rt_priority = 99;
+  EXPECT_THROW(Subscriber(socket_path("sched_99.sock"), callback, 65536, nullptr, scheduling), std::invalid_argument);
+  scheduling.rt_priority = -1;
+  EXPECT_THROW(Subscriber(socket_path("sched_negative.sock"), callback, 65536, nullptr, scheduling),
+    std::invalid_argument);
+
+  // The limit itself is accepted. Without the OS permission it only warns.
+  scheduling.rt_priority = uds_ipc::Scheduling::kMaxRtPriority;
+  EXPECT_NO_THROW(Subscriber(socket_path("sched_limit.sock"), callback, 65536, nullptr, scheduling));
+}
+
+TEST(UdsScheduling, AppliesPriorityOrFallsBackAndStillDelivers)
+{
+  uds_ipc::Scheduling scheduling;
+  scheduling.rt_priority = 30;
+
+  bool applied = false;
+  const auto seen = run_with_scheduling(socket_path("sched_fifo.sock"), scheduling, &applied);
+  if (applied) {
+    EXPECT_EQ(seen.policy, SCHED_FIFO);
+    EXPECT_EQ(seen.priority, 30);
+  } else {
+    EXPECT_TRUE(rt_is_denied());  // Only a missing permission may keep it from applying.
+    EXPECT_NE(seen.policy, SCHED_FIFO);
+  }
+}
+
+TEST(UdsScheduling, RequireThrowsWhenTheOsRefuses)
+{
+  if (!rt_is_denied()) GTEST_SKIP() << "This process may use SCHED_FIFO.";
+
+  uds_ipc::Scheduling scheduling;
+  scheduling.rt_priority = 30;
+  scheduling.require = true;
+  const std::string path = socket_path("sched_require.sock");
+  EXPECT_THROW(
+    uds_ipc::UdsSubscriber<std_msgs::msg::String>(path, [](const std_msgs::msg::String &) {}, 65536, nullptr, scheduling),
+    std::runtime_error);
+  EXPECT_FALSE(std::filesystem::exists(path));  // Nothing is left behind.
+}
+
+TEST(UdsScheduling, PinsTheReceiveThreadToACpu)
+{
+  cpu_set_t allowed;
+  CPU_ZERO(&allowed);
+  ASSERT_EQ(::sched_getaffinity(0, sizeof(allowed), &allowed), 0);
+  int cpu = -1;
+  for (int i = CPU_SETSIZE - 1; i >= 0; --i) {  // The last one, to differ from where the test thread starts.
+    if (CPU_ISSET(i, &allowed)) {
+      cpu = i;
+      break;
+    }
+  }
+  ASSERT_GE(cpu, 0);
+
+  uds_ipc::Scheduling scheduling;
+  scheduling.cpu = cpu;
+  bool applied = false;
+  const auto seen = run_with_scheduling(socket_path("sched_cpu.sock"), scheduling, &applied);
+  EXPECT_TRUE(applied);
+  EXPECT_EQ(seen.cpu, cpu);
 }

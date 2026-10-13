@@ -19,6 +19,21 @@
 
 無負荷の数値は、CPU が深いアイドル状態から復帰する時間が支配的で、どの方式でも避けられません。負荷時には、DDS と Zenoh のミドルウェア層の分が差として残ります。
 
+負荷時の裾は、方式よりもスケジューリングの問題です。受信経路のスレッドがときどき他の処理の後ろで待たされるため、
+1 回の実行の最大レイテンシは、どの方式でも 2〜5 ms になります。リアルタイム優先度を付けると、これがなくなります。
+付けた場合 (256 B、1 kHz) の最大レイテンシは次のとおりです。
+
+| 方式 | 最大レイテンシ | リアルタイムにしたもの |
+|---|---|---|
+| UDS (fixed-size) | 27 µs | 受信スレッドと送信スレッド |
+| UDS (variable-size) | 57 µs | 受信スレッドと送信スレッド |
+| DDS (Cyclone DDS) | 95 µs | publisher と subscriber のプロセス全体 |
+| DDS (Fast DDS) | 115 µs | publisher と subscriber のプロセス全体 |
+| Zenoh | 145 µs | publisher と subscriber のプロセス全体 |
+
+UDS のほうが速いままで、差はおよそ 2 倍 (可変長) から 5 倍 (固定長) です。優先度を付けるスレッドも 1 本で済みます。指定は
+[コンストラクタの引数](#リアルタイムスケジューリング)で行います ([詳細](docs/benchmark_ja.md#リアルタイムスケジューリング))。
+
 `ros2_uds_ipc_benchmark` パッケージで計測しました。publisher ノードと subscriber ノードを別プロセスで起動し、
 ペイロード 6 種を、無負荷と、busy loop スレッド 4 本と CPU を奪い合う状態の両方で測っています。
 
@@ -79,9 +94,11 @@ ros2_uds_ipc:  カーネル -> poll() で待つ専用スレッド -> コール�
 - **4 をまるごと省きます。** カーネルが起こした受信スレッドが、そのままデシリアライズしてコールバックを呼びます。
   スレッド間の受け渡しはありません。
 - **2 はカーネルを介したコピーだけです。** 小さいメッセージでは無視できる大きさです。
-- **1 は残ります。** 任意の rosidl 型 (可変長を含む) を扱うために CDR を使います。DDS も同じコストを払っています。
-- **3 は残ります。** スケジューラと CPU の省電力状態で決まる部分で、ライブラリの外
-  (リアルタイムスケジューリング、CPU 固定など) で対処する領域です。
+- **1 は、固定長メッセージでは省きます。** プリミティブと固定長配列だけのメッセージは、メモリ上のバイト列をそのまま
+  送ります。それ以外の rosidl 型 (可変長を含む) は CDR を使い、DDS も同じコストを払っています。
+- **3 は残ります。** スケジューラと CPU の省電力状態で決まる部分で、ライブラリでは取り除けません。ただし、
+  受信スレッドにリアルタイム優先度と CPU 固定を指定でき、他の処理の後ろで待たされないようにできます
+  ([リアルタイムスケジューリング](#リアルタイムスケジューリング) を参照)。
 
 ### 特徴
 
@@ -193,6 +210,40 @@ rosbag から見えるようになります。ミラーされたメッセージ�
 auto mirror = uds_ipc::create_uds_mirror<sensor_msgs::msg::JointState>(*node, "joint_command");
 uds_ipc::UdsPublisher<sensor_msgs::msg::JointState> publisher("/run/my_robot/joint_command.sock", mirror);
 ```
+
+### リアルタイムスケジューリング
+
+既定では、受信スレッドは通常のスレッドです。CPU が他の処理 (画像処理や経路計画など) で埋まっていると、他と同じように
+順番を待つため、遅れて呼ばれるコールバックが裾として現れます。締め切りのある少数の subscriber については、
+受信スレッドを `SCHED_FIFO` で動かし、必要なら CPU に固定できます。
+
+```cpp
+uds_ipc::Scheduling scheduling;
+scheduling.rt_priority = 40;  // 1 〜 49。0 (既定) なら OS に任せる
+scheduling.cpu = -1;          // 固定する CPU 番号。-1 なら固定しない
+scheduling.require = false;   // true: OS に拒否されたとき、警告ではなく例外にする
+
+uds_ipc::UdsSubscriber<sensor_msgs::msg::JointState> subscriber(
+  "/run/my_robot/joint_command.sock", callback, 65536, nullptr, scheduling);
+if (!subscriber.scheduling_applied()) { /* OS に拒否された。既定のスケジューリングで動作中 */ }
+```
+
+| するとよい | 避ける |
+|---|---|
+| 締め切りのある 1〜2 本 (モータ指令など) だけに使う | すべての subscriber を `SCHED_FIFO` にする |
+| コールバックを短くする (データをコピーして戻る) | ブロック、メモリ確保、通常スレッドと共有するロックの取得 (優先度逆転) |
+| 30〜49 を使う | 大きい数値ほど速いと期待する。50 以上は拒否されます。Linux は割り込み処理スレッドを 50 で動かしており、受信スレッドがカーネルを追い越さないようにするためです |
+| 他の処理から空けたコア (`isolcpus`、cpuset) にだけ固定する | 共有コアに固定する |
+
+OS が許可していないと、警告を出して既定のスケジューリングのまま動きます (`require = true` なら、コンストラクタが
+例外を投げます)。次のいずれかで許可します。
+
+- `/etc/security/limits.d/99-realtime.conf` に `@realtime - rtprio 49` と `@realtime - memlock unlimited` を書き、
+  ユーザーを `realtime` グループに入れる (再ログインが必要)
+- systemd ユニットで `LimitRTPRIO=49`、Docker なら `--cap-add=SYS_NICE --ulimit rtprio=49`
+
+送信側のスレッドは利用者のものです。制御ループが送信するなら、同様にそのスレッドへリアルタイム優先度を付けてください
+(`pthread_setschedparam`)。起動時に `mlockall(MCL_CURRENT | MCL_FUTURE)` を呼ぶと、その経路のページフォルトを避けられます。
 
 ## Tech Stack
 

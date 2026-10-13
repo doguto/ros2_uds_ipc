@@ -6,6 +6,8 @@
 # Environment:
 #   SIZES  Payload sizes in bytes
 #   RATES  Publish rates in Hz, 0 for no throttling
+#   RT_PRIORITY  SCHED_FIFO priority (default: 0, off). uds: the receive and publishing threads. dds: the whole
+#                publisher and subscriber processes. Needs an rtprio limit
 #   TRANSPORTS  UDS transports to measure (default: uds_reliable uds_reliable_fixed; also: uds)
 #   COUNT  Number of measured messages per run (default: 10 s worth at the rate, at most 10000)
 #   LOADS  Numbers of busy-loop threads (default: idle and all cores)
@@ -21,6 +23,7 @@ SIZES=${SIZES:-"64 256 1024 4096 16384 65536"}
 RATES=${RATES:-"100 1000 10000 0"}
 LOADS=${LOADS:-"0 $(nproc)"}
 REPEAT=${REPEAT:-1}
+RT_PRIORITY=${RT_PRIORITY:-0}
 TRANSPORTS=${TRANSPORTS:-"uds_reliable uds_reliable_fixed"}
 
 if [ -z "${RMWS:-}" ]; then
@@ -40,7 +43,7 @@ run() {  # run LOAD TRANSPORT RATE SIZE
   fi
   if ! ros2 launch ros2_uds_ipc_benchmark latency.launch.py \
     transport:="$2" payload_bytes:="$4" count:="$count" rate_hz:="$3.0" load_threads:="$1" \
-    output_file:="$OUTPUT"; then
+    rt_priority:="$RT_PRIORITY" output_file:="$OUTPUT"; then
     echo "latency.launch.py failed: load_threads=$1 transport=$2 rate=$3 size=$4 rmw=${RMW_IMPLEMENTATION:-default}" >&2
   fi
 }

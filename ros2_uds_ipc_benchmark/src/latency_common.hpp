@@ -6,6 +6,8 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <pthread.h>
+#include <sched.h>
 #include <string>
 
 #include <rclcpp/rclcpp.hpp>
@@ -71,6 +73,9 @@ namespace latency_benchmark
     size_t payload_bytes;
     size_t count;
     double rate_hz;  // 0: publish as fast as possible.
+    // SCHED_FIFO priority, 0: not used. uds: the receive thread (Scheduling) and the publishing thread.
+    // dds: latency.launch.py starts both processes under `chrt -f`, so that every thread of the middleware has it.
+    int rt_priority;
   };
 
   /// Declares and reads the parameters common to both nodes. Throws std::invalid_argument on bad values.
@@ -82,6 +87,7 @@ namespace latency_benchmark
     const int64_t payload_bytes = node.declare_parameter<int64_t>("payload_bytes", 64);
     const int64_t count = node.declare_parameter<int64_t>("count", 10000);
     options.rate_hz = node.declare_parameter<double>("rate_hz", 1000.0);
+    options.rt_priority = static_cast<int>(node.declare_parameter<int64_t>("rt_priority", 0));
 
     if (options.transport != "uds" && options.transport != "uds_reliable" && options.transport != "uds_reliable_fixed" &&
       options.transport != "dds")
@@ -90,6 +96,9 @@ namespace latency_benchmark
     }
     if (payload_bytes < static_cast<int64_t>(sizeof(int64_t)) || count <= 0 || options.rate_hz < 0.0) {
       throw std::invalid_argument("payload_bytes must be >= 8, count > 0 and rate_hz >= 0");
+    }
+    if (options.rt_priority < 0) {
+      throw std::invalid_argument("rt_priority must be >= 0");
     }
     options.payload_bytes = static_cast<size_t>(payload_bytes);
     options.count = static_cast<size_t>(count);
@@ -170,6 +179,18 @@ namespace latency_benchmark
       msg.data.resize(sizeof(end_marker));
     }
     std::memcpy(msg.data.data(), &end_marker, sizeof(end_marker));
+  }
+
+  /// Gives the calling thread SCHED_FIFO with `priority`. Throws std::runtime_error if the OS refuses.
+  inline void set_realtime(int priority)
+  {
+    sched_param param{};
+    param.sched_priority = priority;
+    const int result = ::pthread_setschedparam(::pthread_self(), SCHED_FIFO, &param);
+    if (result != 0) {
+      throw std::runtime_error(
+        "could not set SCHED_FIFO priority " + std::to_string(priority) + ": " + std::strerror(result));
+    }
   }
 
   inline rclcpp::QoS dds_qos()

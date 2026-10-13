@@ -173,6 +173,53 @@ Peak RSS of the publisher / subscriber process (MB): median, and maximum in pare
 | 4 busy-loop threads | 10 kHz | DDS (Cyclone DDS) | 57.1 | 54.9 | 58.7 | 59.5 | 79.0 | 184 |
 | 4 busy-loop threads | 10 kHz | Zenoh | 65.1 | 56.6 | 63.6 | 62.0 | 82.3 | 235 |
 
+## Real-time scheduling
+
+What a real-time priority does to the latency under load: 256 B at 1 kHz and 100 Hz, with 4 busy-loop threads
+competing for the CPU. Each cell is "default scheduling → `SCHED_FIFO` priority 40", in µs, as the median of 5 runs;
+"worst max" is the largest latency seen in any of the 5 runs. The two settings were measured alternately.
+
+- **UDS** — the receive thread (`Scheduling::rt_priority`, see the [README](../README.md#real-time-scheduling)) and
+  the publishing thread, nothing else in the process.
+- **DDS / Zenoh** — the whole publisher and subscriber processes, started under `chrt -f 40`, so that every thread of
+  the middleware has the priority. This is the most favorable setting for them; the Zenoh router keeps the default.
+
+### 1 kHz
+
+| Transport | Median | p99 | p99.9 | Max | Worst max of 5 runs | CPU time per message |
+|---|---|---|---|---|---|---|
+| UDS (fixed-size) | 12 → 11 | 35 → 14 | 717 → 18 | 2866 → 27 | 2929 → 33 | 41 → 32 |
+| UDS (variable-size) | 33 → 27 | 71 → 35 | 728 → 45 | 2487 → 57 | 3152 → 66 | 61 → 51 |
+| DDS (Cyclone DDS) | 90 → 50 | 1719 → 57 | 3005 → 71 | 3128 → 95 | 4072 → 102 | 105 → 92 |
+| DDS (Fast DDS) | 1056 → 64 | 2882 → 73 | 4356 → 88 | 5355 → 115 | 7015 → 166 | 126 → 133 |
+| Zenoh | 1362 → 91 | 3009 → 100 | 4803 → 122 | 5124 → 145 | 6840 → 205 | 153 → 158 |
+
+### 100 Hz
+
+| Transport | Median | p99 | p99.9 | Max | Worst max of 5 runs | CPU time per message |
+|---|---|---|---|---|---|---|
+| UDS (fixed-size) | 13 → 12 | 38 → 25 | 1009 → 35 | 1376 → 36 | 2932 → 47 | 59 → 43 |
+| UDS (variable-size) | 35 → 34 | 507 → 70 | 1015 → 91 | 1017 → 95 | 3127 → 109 | 78 → 73 |
+| DDS (Cyclone DDS) | 76 → 53 | 2015 → 102 | 2886 → 141 | 2973 → 147 | 3217 → 176 | 118 → 102 |
+| DDS (Fast DDS) | 219 → 67 | 2394 → 102 | 3326 → 178 | 4064 → 184 | 5155 → 222 | 163 → 144 |
+| Zenoh | 664 → 95 | 3612 → 154 | 4615 → 213 | 4615 → 229 | 15632 → 265 | 176 → 167 |
+
+- **The tail is a matter of scheduling, for every transport.** With the default scheduling, a thread on the receive
+  path waits behind the busy-loop threads every so often, and the largest latency of a run is 1 - 5 ms whatever the
+  transport. With a real-time priority it stays below 300 µs for all of them, well within a 1 kHz control period.
+- **UDS stays ahead once everything is real-time, by roughly 2x (variable-size) to 5x (fixed-size).** At 1 kHz the largest latency is 27 µs (fixed-size) and
+  57 µs (variable-size), against 95 - 145 µs; the median is 11 µs and 27 µs against 50 - 91 µs, and the CPU time per
+  message 32 µs and 51 µs against 92 - 158 µs.
+- **UDS needs the priority on one thread.** The DDS numbers come from making whole processes real-time, which is
+  not an option for a process that also does heavy work; prioritizing only the threads on the receive path takes
+  middleware-specific configuration.
+- **Without a real-time priority**, which is the situation when it cannot be configured, the difference is in p99:
+  35 - 71 µs for UDS against 1.7 - 2.9 ms at 1 kHz.
+- At 100 Hz a run has 1000 messages, so p99.9 and the maximum are single samples.
+
+Raw data: [`latency_rt.csv`](benchmark/latency_rt.csv) (`rt_priority` 0 and 40, 50 runs each). To reproduce it,
+pass `RT_PRIORITY=40` to `run_latency_matrix.sh`; the process needs an `rtprio` limit, and Zenoh a running router.
+
 ## CSV columns
 
 | Column | Meaning |
@@ -186,6 +233,7 @@ Peak RSS of the publisher / subscriber process (MB): median, and maximum in pare
 | `connect_ms` | From creating the publisher until the subscriber can be reached |
 | `pub_max_rss_kb`, `sub_max_rss_kb` | Peak resident set size of each process |
 | `throughput_hz` | Messages received per second |
+| `rt_priority` | `SCHED_FIFO` priority, 0 if not used (newer files only). `uds`: the receive and publishing threads; `dds`: the whole processes |
 
 ## Running it yourself
 

@@ -28,6 +28,10 @@ def generate_launch_description():
                               description='Publish rate in Hz, 0 for no throttling'),
         DeclareLaunchArgument('socket_path', default_value='/tmp/uds_ipc_benchmark/latency.sock',
                               description='UDS socket path (uds transports only)'),
+        DeclareLaunchArgument('rt_priority', default_value='0',
+                              description='SCHED_FIFO priority, 0: not used, at most 49. uds: the subscriber '
+                                          'receive thread and the publishing thread. dds: both processes are '
+                                          'started under chrt, so every thread of the middleware gets it'),
         DeclareLaunchArgument('load_threads', default_value='0',
                               description='Number of busy-loop threads to run alongside (0: no load)'),
         DeclareLaunchArgument('publisher_delay', default_value='2.0',
@@ -43,12 +47,20 @@ def generate_launch_description():
         'count': ParameterValue(LaunchConfiguration('count'), value_type=int),
         'rate_hz': ParameterValue(LaunchConfiguration('rate_hz'), value_type=float),
         'socket_path': ParameterValue(LaunchConfiguration('socket_path'), value_type=str),
+        'rt_priority': ParameterValue(LaunchConfiguration('rt_priority'), value_type=int),
     }
+
+    # DDS has no single thread to prioritize, so the whole process is made real-time. The uds transports
+    # set the priority themselves, on the receive thread and the publishing thread only.
+    dds_prefix = PythonExpression([
+        "'chrt -f ", LaunchConfiguration('rt_priority'), "' if '", LaunchConfiguration('transport'),
+        "' == 'dds' and ", LaunchConfiguration('rt_priority'), " > 0 else ''"])
 
     subscriber = Node(
         package='ros2_uds_ipc_benchmark',
         executable='latency_subscriber',
         output='screen',
+        prefix=dds_prefix,
         parameters=[common_parameters, {
             'output_file': ParameterValue(LaunchConfiguration('output_file'), value_type=str),
             'load_threads': ParameterValue(LaunchConfiguration('load_threads'), value_type=int),
@@ -58,6 +70,7 @@ def generate_launch_description():
         package='ros2_uds_ipc_benchmark',
         executable='latency_publisher',
         output='screen',
+        prefix=dds_prefix,
         parameters=[common_parameters],
     )
 

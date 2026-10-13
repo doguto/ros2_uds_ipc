@@ -175,16 +175,17 @@ namespace
         file,
         "transport,rmw,payload_bytes,rate_hz,load_threads,count,publish_failed,received,min_us,mean_us,p50_us,p99_us,"
         "p999_us,max_us,pub_cpu_percent,pub_cpu_us_per_msg,sub_cpu_percent,sub_cpu_us_per_msg,connect_ms,"
-        "pub_max_rss_kb,sub_max_rss_kb,throughput_hz\n"
+        "pub_max_rss_kb,sub_max_rss_kb,throughput_hz,rt_priority\n"
       );
     }
     // The RMW implementation only matters for the dds rows.
     std::fprintf(
-      file, "%s,%s,%zu,%g,%ld,%zu,%ld,%zu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%.3f,%.2f,%.3f,%.3f,%ld,%ld,%.1f\n",
+      file, "%s,%s,%zu,%g,%ld,%zu,%ld,%zu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%.3f,%.2f,%.3f,%.3f,%ld,%ld,%.1f,%d\n",
       options.transport.c_str(), options.transport == "dds" ? rmw_get_implementation_identifier() : "",
       options.payload_bytes, options.rate_hz, static_cast<long>(load_threads), options.count, publish_failed,
       sorted_ns.size(), min_us, mean_us, p50_us, p99_us, p999_us, max_us, pub_cpu_percent, pub_cpu_us_per_msg,
-      sub_cpu_percent, sub_cpu_us_per_msg, connect_ms, pub_max_rss_kb, sub_max_rss_kb, throughput_hz
+      sub_cpu_percent, sub_cpu_us_per_msg, connect_ms, pub_max_rss_kb, sub_max_rss_kb, throughput_hz,
+      options.rt_priority
     );
     std::fclose(file);
   }
@@ -201,17 +202,24 @@ namespace
     const auto callback = [&recorder](const auto & msg) { recorder.on_message(msg); };
     const auto dds_callback = [&recorder](const Message & msg) { recorder.on_message(msg); };
 
+    // A run labeled with a priority must really have it, so a refusal is an error and not a warning.
+    uds_ipc::Scheduling scheduling;
+    scheduling.rt_priority = options.rt_priority;
+    scheduling.require = true;
+
     bool completed = false;
     if (options.transport == "uds_reliable_fixed") {
       dispatch_fixed(options.payload_bytes, [&](auto msg) {
         // Received straight into the message; there is no serialized buffer.
-        uds_ipc::UdsSubscriber<decltype(msg)> subscriber(options.socket_path, callback);
+        uds_ipc::UdsSubscriber<decltype(msg)> subscriber(
+          options.socket_path, callback, 65536, nullptr, scheduling);
         completed = recorder.wait_done();
         return 0;
       });
     } else if (options.transport != "dds") {
       // Headroom for the CDR header and the MultiArray layout.
-      uds_ipc::UdsSubscriber<Message> subscriber(options.socket_path, callback, options.payload_bytes + 1024);
+      uds_ipc::UdsSubscriber<Message> subscriber(
+        options.socket_path, callback, options.payload_bytes + 1024, nullptr, scheduling);
       completed = recorder.wait_done();
     } else {
       auto subscription = node->create_subscription<Message>(kTopic, dds_qos(), dds_callback);

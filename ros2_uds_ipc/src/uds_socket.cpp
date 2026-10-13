@@ -1,6 +1,8 @@
 #include "ros2_uds_ipc/detail/uds_socket.hpp"
 
 #include <poll.h>
+#include <pthread.h>
+#include <sched.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -8,8 +10,12 @@
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
+#include <future>
+#include <memory>
 #include <stdexcept>
 #include <utility>
+
+#include <rclcpp/logging.hpp>
 
 namespace uds_ipc
 {
@@ -81,9 +87,19 @@ namespace detail
     return false;
   }
 
-  UdsServerSocket::UdsServerSocket(std::string path, uint8_t * buffer, size_t capacity, ReceiveHandler on_receive)
-  : path_(std::move(path)), buffer_(buffer), capacity_(capacity), on_receive_(std::move(on_receive))
+  UdsServerSocket::UdsServerSocket(
+    std::string path, uint8_t * buffer, size_t capacity, ReceiveHandler on_receive, Scheduling scheduling)
+  : path_(std::move(path)), buffer_(buffer), capacity_(capacity), on_receive_(std::move(on_receive)),
+    scheduling_(scheduling)
   {
+    if (scheduling_.rt_priority < 0 || scheduling_.rt_priority > Scheduling::kMaxRtPriority) {
+      throw std::invalid_argument(
+        "UdsSubscriber: rt_priority must be 0 (off) or 1 - " + std::to_string(Scheduling::kMaxRtPriority));
+    }
+    if (scheduling_.cpu < -1 || scheduling_.cpu >= CPU_SETSIZE) {
+      throw std::invalid_argument("UdsSubscriber: cpu must be -1 (any) or a valid CPU number");
+    }
+
     const auto parent = std::filesystem::path(path_).parent_path();
     if (!parent.empty()) {
       std::filesystem::create_directories(parent);
@@ -106,7 +122,54 @@ namespace detail
       ::close(listen_fd_);
       throw std::runtime_error("UdsSubscriber: listen() failed for " + path_);
     }
-    thread_ = std::thread(&UdsServerSocket::accept_loop, this);
+
+    // The thread reports whether it got its scheduling before it starts to receive.
+    auto applied = std::make_shared<std::promise<std::string>>();
+    auto result = applied->get_future();
+    thread_ = std::thread([this, applied] {
+      applied->set_value(apply_scheduling());
+      accept_loop();
+    });
+
+    const std::string error = result.get();
+    if (error.empty()) return;
+
+    scheduling_applied_ = false;
+    if (scheduling_.require) {
+      running_ = false;
+      thread_.join();
+      ::close(listen_fd_);
+      ::unlink(path_.c_str());
+      throw std::runtime_error("UdsSubscriber: " + error);
+    }
+    RCLCPP_WARN(
+      rclcpp::get_logger("ros2_uds_ipc"), "UdsSubscriber %s: %s. Running with the default scheduling.",
+      path_.c_str(), error.c_str());
+  }
+
+  std::string UdsServerSocket::apply_scheduling() const
+  {
+    std::string error;
+    if (scheduling_.rt_priority > 0) {
+      sched_param param{};
+      param.sched_priority = scheduling_.rt_priority;
+      const int result = ::pthread_setschedparam(::pthread_self(), SCHED_FIFO, &param);
+      if (result != 0) {
+        error += "could not set SCHED_FIFO priority " + std::to_string(scheduling_.rt_priority) + " (" +
+          std::strerror(result) + "; needs an rtprio limit or CAP_SYS_NICE)";
+      }
+    }
+    if (scheduling_.cpu >= 0) {
+      cpu_set_t set;
+      CPU_ZERO(&set);
+      CPU_SET(scheduling_.cpu, &set);
+      const int result = ::pthread_setaffinity_np(::pthread_self(), sizeof(set), &set);
+      if (result != 0) {
+        error += std::string(error.empty() ? "" : "; ") + "could not pin to CPU " +
+          std::to_string(scheduling_.cpu) + " (" + std::strerror(result) + ")";
+      }
+    }
+    return error;
   }
 
   UdsServerSocket::~UdsServerSocket()
