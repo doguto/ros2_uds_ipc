@@ -24,13 +24,22 @@ namespace uds_ipc
 namespace detail
 {
   UdsServerSocket::UdsServerSocket(
-    std::string path, uint8_t * buffer, size_t capacity, ReceiveHandler on_receive, Scheduling scheduling)
-  : path_(std::move(path)), buffer_(buffer), capacity_(capacity), on_receive_(std::move(on_receive)),
+    std::string path,
+    uint8_t * buffer,
+    size_t capacity,
+    ReceiveHandler on_receive,
+    Scheduling scheduling
+  )
+  : path_(std::move(path)),
+    buffer_(buffer),
+    capacity_(capacity),
+    on_receive_(std::move(on_receive)),
     scheduling_(scheduling)
   {
     if (scheduling_.rt_priority < 0 || scheduling_.rt_priority > Scheduling::kMaxRtPriority) {
       throw std::invalid_argument(
-        "UdsSubscriber: rt_priority must be 0 (off) or 1 - " + std::to_string(Scheduling::kMaxRtPriority));
+        "UdsSubscriber: rt_priority must be 0 (off) or 1 - " + std::to_string(Scheduling::kMaxRtPriority)
+      );
     }
     if (scheduling_.cpu < -1 || scheduling_.cpu >= CPU_SETSIZE) {
       throw std::invalid_argument("UdsSubscriber: cpu must be -1 (any) or a valid CPU number");
@@ -77,8 +86,11 @@ namespace detail
       throw std::runtime_error("UdsSubscriber: " + error);
     }
     RCLCPP_WARN(
-      rclcpp::get_logger("ros2_uds_ipc"), "UdsSubscriber %s: %s. Running with the default scheduling.",
-      path_.c_str(), error.c_str());
+      rclcpp::get_logger("ros2_uds_ipc"),
+      "UdsSubscriber %s: %s. Running with the default scheduling.",
+      path_.c_str(),
+      error.c_str()
+    );
   }
 
   std::string UdsServerSocket::apply_scheduling() const

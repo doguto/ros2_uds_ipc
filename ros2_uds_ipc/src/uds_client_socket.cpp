@@ -54,9 +54,8 @@ namespace detail
       if (sent == static_cast<ssize_t>(length)) return true;
       if (sent < 0 && errno == EINTR) continue;
 
-      if (sent >= 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
-        break;  // Disconnected, or the message can never be sent (e.g. larger than the send buffer).
-      }
+      // Disconnected, or the message can never be sent (e.g. larger than the send buffer).
+      if (sent >= 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) break;
 
       // The peer is alive but has not consumed its queue yet.
       const auto now = std::chrono::steady_clock::now();

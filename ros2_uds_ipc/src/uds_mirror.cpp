@@ -12,7 +12,9 @@ namespace uds_ipc
     size_t max_queue,
     std::chrono::milliseconds period
   )
-  : publisher_(std::move(publisher)), period_(period), slots_(max_queue),
+  : publisher_(std::move(publisher)),
+    period_(period),
+    slots_(max_queue),
     thread_(&UdsMirrorWorker::run, this)
   {}
 

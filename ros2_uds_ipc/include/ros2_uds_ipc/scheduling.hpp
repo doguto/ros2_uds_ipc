@@ -17,7 +17,7 @@ namespace uds_ipc
     /// at SCHED_FIFO 50, so anything from 50 up could delay or starve the kernel itself and is rejected.
     static constexpr int kMaxRtPriority = 49;
 
-    /// 0: the OS default policy. 1 - kMaxRtPriority: SCHED_FIFO with that priority.
+    /// 0: the OS default policy. 1 ~ kMaxRtPriority: SCHED_FIFO with that priority.
     int rt_priority = 0;
 
     /// CPU to pin the receive thread to, -1 to let the OS choose. Pinning only helps when that core is
