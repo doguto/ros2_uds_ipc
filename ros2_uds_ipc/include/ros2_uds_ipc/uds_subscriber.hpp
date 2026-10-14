@@ -13,7 +13,7 @@
 
 #include "ros2_uds_ipc/detail/cdr_codec.hpp"
 #include "ros2_uds_ipc/detail/raw_copy.hpp"
-#include "ros2_uds_ipc/detail/uds_socket.hpp"
+#include "ros2_uds_ipc/detail/uds_server_socket.hpp"
 #include "ros2_uds_ipc/scheduling.hpp"
 #include "ros2_uds_ipc/uds_mirror.hpp"
 

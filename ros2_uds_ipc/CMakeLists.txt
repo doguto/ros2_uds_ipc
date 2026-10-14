@@ -18,7 +18,8 @@ find_package(Threads REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
   src/uds_mirror.cpp
-  src/uds_socket.cpp
+  src/uds_client_socket.cpp
+  src/uds_server_socket.cpp
 )
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 target_include_directories(${PROJECT_NAME} PUBLIC
