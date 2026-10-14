@@ -2,6 +2,10 @@
 
 [English](README.md) | [日本語](README_ja.md)
 
+[![CI](https://github.com/doguto/ros2_uds_ipc/actions/workflows/ci.yml/badge.svg)](https://github.com/doguto/ros2_uds_ipc/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![ROS 2](https://img.shields.io/badge/ROS%202-Jazzy%20%7C%20Kilted%20%7C%20Rolling-22314E)
+
 A thin C++ library for ROS 2 that publishes and subscribes `rclcpp` message types as-is over Unix domain
 sockets (`AF_UNIX` / `SOCK_SEQPACKET`), bypassing DDS.
 
