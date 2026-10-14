@@ -13,6 +13,8 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(fastcdr REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rosidl_runtime_cpp REQUIRED)
+find_package(rosidl_typesupport_cpp REQUIRED)
 find_package(rosidl_typesupport_fastrtps_cpp REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -30,6 +32,8 @@ target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 target_link_libraries(${PROJECT_NAME} PUBLIC
   fastcdr
   rclcpp::rclcpp
+  rosidl_runtime_cpp::rosidl_runtime_cpp
+  rosidl_typesupport_cpp::rosidl_typesupport_cpp
   rosidl_typesupport_fastrtps_cpp::rosidl_typesupport_fastrtps_cpp
   Threads::Threads
 )
@@ -59,6 +63,13 @@ if(BUILD_TESTING)
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(fastcdr rclcpp rosidl_typesupport_fastrtps_cpp Threads)
+ament_export_dependencies(
+  fastcdr
+  rclcpp
+  rosidl_runtime_cpp
+  rosidl_typesupport_cpp
+  rosidl_typesupport_fastrtps_cpp
+  Threads
+)
 
 ament_package()
