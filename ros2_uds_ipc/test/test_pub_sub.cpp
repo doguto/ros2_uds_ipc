@@ -20,7 +20,6 @@
 
 
 #include <sched.h>
-#include <sys/resource.h>
 #include <unistd.h>
 
 #include <gtest/gtest.h>
@@ -340,12 +339,18 @@ CallbackThread run_with_scheduling(
   return seen;
 }
 
-  /// True if an unprivileged process is not allowed to use SCHED_FIFO.
+/// True if this process is not allowed to use SCHED_FIFO. It tries on a throwaway thread, because
+/// the answer depends on rlimits and capabilities
+/// (a root user in a container may lack CAP_SYS_NICE).
 bool rt_is_denied()
 {
-  rlimit limit{};
-  ::getrlimit(RLIMIT_RTPRIO, &limit);
-  return ::geteuid() != 0 && limit.rlim_cur == 0;
+  bool denied = true;
+  std::thread([&denied] {
+      sched_param param{};
+      param.sched_priority = 30;
+      denied = ::sched_setscheduler(0, SCHED_FIFO, &param) != 0;
+    }).join();
+  return denied;
 }
 }  // namespace
 
