@@ -48,11 +48,14 @@ install(
 )
 
 if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
   find_package(ament_cmake_gtest REQUIRED)
   find_package(std_msgs REQUIRED)
 
   ament_add_gtest(test_pub_sub test/test_pub_sub.cpp)
   target_link_libraries(test_pub_sub ${PROJECT_NAME} ${std_msgs_TARGETS})
+
+  ament_lint_auto_find_test_dependencies()
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)

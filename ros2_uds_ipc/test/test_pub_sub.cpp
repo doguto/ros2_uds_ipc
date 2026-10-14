@@ -1,6 +1,29 @@
+// Copyright 2026 kuto
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+// THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+
 #include <sched.h>
 #include <sys/resource.h>
 #include <unistd.h>
+
+#include <gtest/gtest.h>
 
 #include <chrono>
 #include <condition_variable>
@@ -11,7 +34,6 @@
 #include <thread>
 #include <vector>
 
-#include <gtest/gtest.h>
 #include <std_msgs/msg/color_rgba.hpp>
 #include <std_msgs/msg/string.hpp>
 
@@ -20,11 +42,12 @@
 
 namespace
 {
-  std::string socket_path(const std::string & name)
-  {
-    const auto dir = std::filesystem::temp_directory_path() / ("uds_ipc_test_" + std::to_string(::getpid()));
-    return (dir / name).string();
-  }
+std::string socket_path(const std::string & name)
+{
+  const auto dir = std::filesystem::temp_directory_path() /
+    ("uds_ipc_test_" + std::to_string(::getpid()));
+  return (dir / name).string();
+}
 }  // namespace
 
 TEST(UdsPubSub, PublishFailsWithoutSubscriber)
@@ -58,7 +81,9 @@ TEST(UdsPubSub, DeliversMessagesInOrder)
   }
 
   std::unique_lock<std::mutex> lock(mutex);
-  ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return received.size() == message_count; }));
+  ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {
+      return received.size() == message_count;
+  }));
   for (size_t i = 0; i < message_count; ++i) {
     EXPECT_EQ(received[i], "message " + std::to_string(i));
   }
@@ -94,7 +119,9 @@ TEST(UdsPubSub, DeliversFixedSizeMessagesAsRawBytes)
   }
 
   std::unique_lock<std::mutex> lock(mutex);
-  ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return received.size() == message_count; }));
+  ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {
+      return received.size() == message_count;
+  }));
   for (size_t i = 0; i < message_count; ++i) {
     EXPECT_EQ(received[i].r, static_cast<float>(i));
     EXPECT_EQ(received[i].g, 0.25f);
@@ -117,7 +144,7 @@ TEST(UdsPubSub, FullQueueDropsWithoutTimeoutAndKeepsConnection)
   uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
     path, [&](const std_msgs::msg::String &) {
       std::unique_lock<std::mutex> lock(mutex);
-      cv.wait(lock, [&] { return release; });
+      cv.wait(lock, [&] {return release;});
       ++received;
       cv.notify_all();
     });
@@ -139,11 +166,11 @@ TEST(UdsPubSub, FullQueueDropsWithoutTimeoutAndKeepsConnection)
   std::unique_lock<std::mutex> lock(mutex);
   release = true;
   cv.notify_all();
-  ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return received == sent; }));
+  ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received == sent;}));
   lock.unlock();
   ASSERT_TRUE(publisher.publish(msg));
   lock.lock();
-  EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return received == sent + 1; }));
+  EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received == sent + 1;}));
 }
 
 TEST(UdsPubSub, SendBufferSizeBoundsTheQueue)
@@ -153,27 +180,27 @@ TEST(UdsPubSub, SendBufferSizeBoundsTheQueue)
 
   // Number of messages accepted while the subscriber does not consume anything.
   const auto count_accepted = [&](const std::string & name, size_t send_buffer_bytes) {
-    const std::string path = socket_path(name);
-    std::mutex mutex;
-    std::condition_variable cv;
-    bool release = false;
-    uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
-      path, [&](const std_msgs::msg::String &) {
-        std::unique_lock<std::mutex> lock(mutex);
-        cv.wait(lock, [&] { return release; });
-      });
+      const std::string path = socket_path(name);
+      std::mutex mutex;
+      std::condition_variable cv;
+      bool release = false;
+      uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
+        path, [&](const std_msgs::msg::String &) {
+          std::unique_lock<std::mutex> lock(mutex);
+          cv.wait(lock, [&] {return release;});
+        });
 
-    uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path, nullptr, send_buffer_bytes);
-    size_t accepted = 0;
-    while (accepted < 100000 && publisher.publish(msg)) {
-      ++accepted;
-    }
+      uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path, nullptr, send_buffer_bytes);
+      size_t accepted = 0;
+      while (accepted < 100000 && publisher.publish(msg)) {
+        ++accepted;
+      }
 
-    std::lock_guard<std::mutex> lock(mutex);
-    release = true;
-    cv.notify_all();
-    return accepted;
-  };
+      std::lock_guard<std::mutex> lock(mutex);
+      release = true;
+      cv.notify_all();
+      return accepted;
+    };
 
   const size_t accepted_default = count_accepted("buffer_default.sock", 0);
   const size_t accepted_small = count_accepted("buffer_small.sock", 16 * 1024);
@@ -205,10 +232,11 @@ TEST(UdsPubSub, SendTimeoutWaitsForSlowSubscriber)
   }
 
   std::unique_lock<std::mutex> lock(mutex);
-  EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return received == message_count; }));
+  EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received == message_count;}));
 }
 
-// A message larger than max_message_size arrives truncated. It is dropped, and later messages still arrive.
+// A message larger than max_message_size arrives truncated. It is dropped, and later messages
+// still arrive.
 TEST(UdsPubSub, DropsMessagesLargerThanMaxMessageSize)
 {
   const std::string path = socket_path("oversized.sock");
@@ -231,7 +259,7 @@ TEST(UdsPubSub, DropsMessagesLargerThanMaxMessageSize)
   ASSERT_TRUE(publisher.publish(msg));
 
   std::unique_lock<std::mutex> lock(mutex);
-  ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return !received.empty(); }));
+  ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return !received.empty();}));
   ASSERT_EQ(received.size(), 1u);
   EXPECT_EQ(received[0], "small");
 }
@@ -246,17 +274,17 @@ TEST(UdsPubSub, ReconnectsAfterSubscriberRestart)
   std::condition_variable cv;
   size_t received = 0;
   const auto callback = [&](const std_msgs::msg::String &) {
-    std::lock_guard<std::mutex> lock(mutex);
-    ++received;
-    cv.notify_one();
-  };
+      std::lock_guard<std::mutex> lock(mutex);
+      ++received;
+      cv.notify_one();
+    };
 
   uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
   {
     uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(path, callback);
     ASSERT_TRUE(publisher.publish(msg));
     std::unique_lock<std::mutex> lock(mutex);
-    ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return received == 1; }));
+    ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received == 1;}));
   }
 
   // The first publish after the peer is gone detects the disconnection and fails.
@@ -265,7 +293,7 @@ TEST(UdsPubSub, ReconnectsAfterSubscriberRestart)
   uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(path, callback);
   ASSERT_TRUE(publisher.publish(msg));
   std::unique_lock<std::mutex> lock(mutex);
-  EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return received == 2; }));
+  EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received == 2;}));
 }
 
 // Receive thread scheduling
@@ -273,49 +301,52 @@ TEST(UdsPubSub, ReconnectsAfterSubscriberRestart)
 namespace
 {
   /// Policy and CPU of the thread that invoked the callback, for the first message received.
-  struct CallbackThread
-  {
-    int policy = -1;
-    int priority = -1;
-    int cpu = -1;
-  };
+struct CallbackThread
+{
+  int policy = -1;
+  int priority = -1;
+  int cpu = -1;
+};
 
-  /// Publishes one message to a subscriber created with `scheduling` and returns what the callback thread looked like.
-  CallbackThread run_with_scheduling(const std::string & path, const uds_ipc::Scheduling & scheduling, bool * applied)
-  {
-    std::mutex mutex;
-    std::condition_variable cv;
-    bool done = false;
-    CallbackThread seen;
-    uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
-      path, [&](const std_msgs::msg::String &) {
-        std::lock_guard<std::mutex> lock(mutex);
-        sched_param param{};
-        seen.policy = ::sched_getscheduler(0);
-        ::sched_getparam(0, &param);
-        seen.priority = param.sched_priority;
-        seen.cpu = ::sched_getcpu();
-        done = true;
-        cv.notify_one();
-      }, 65536, nullptr, scheduling);
-    if (applied) *applied = subscriber.scheduling_applied();
+  /// Publishes one message to a subscriber created with `scheduling` and returns what the callback
+  /// thread looked like.
+CallbackThread run_with_scheduling(
+  const std::string & path, const uds_ipc::Scheduling & scheduling,
+  bool * applied)
+{
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool done = false;
+  CallbackThread seen;
+  uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
+    path, [&](const std_msgs::msg::String &) {
+      std::lock_guard<std::mutex> lock(mutex);
+      sched_param param{};
+      seen.policy = ::sched_getscheduler(0);
+      ::sched_getparam(0, &param);
+      seen.priority = param.sched_priority;
+      seen.cpu = ::sched_getcpu();
+      done = true;
+      cv.notify_one();
+    }, 65536, nullptr, scheduling);
+  if (applied) {*applied = subscriber.scheduling_applied();}
 
-    uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
-    std_msgs::msg::String msg;
-    msg.data = "x";
-    EXPECT_TRUE(publisher.publish(msg));
-    std::unique_lock<std::mutex> lock(mutex);
-    EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] { return done; }));
-    return seen;
-  }
+  uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+  std_msgs::msg::String msg;
+  msg.data = "x";
+  EXPECT_TRUE(publisher.publish(msg));
+  std::unique_lock<std::mutex> lock(mutex);
+  EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return done;}));
+  return seen;
+}
 
   /// True if an unprivileged process is not allowed to use SCHED_FIFO.
-  bool rt_is_denied()
-  {
-    rlimit limit{};
-    ::getrlimit(RLIMIT_RTPRIO, &limit);
-    return ::geteuid() != 0 && limit.rlim_cur == 0;
-  }
+bool rt_is_denied()
+{
+  rlimit limit{};
+  ::getrlimit(RLIMIT_RTPRIO, &limit);
+  return ::geteuid() != 0 && limit.rlim_cur == 0;
+}
 }  // namespace
 
 TEST(UdsScheduling, DefaultLeavesTheThreadAlone)
@@ -333,16 +364,19 @@ TEST(UdsScheduling, RejectsPrioritiesAboveTheLimit)
   uds_ipc::Scheduling scheduling;
 
   scheduling.rt_priority = uds_ipc::Scheduling::kMaxRtPriority + 1;
-  EXPECT_THROW(Subscriber(socket_path("sched_above.sock"), callback, 65536, nullptr, scheduling), std::invalid_argument);
+  EXPECT_THROW(Subscriber(socket_path("sched_above.sock"), callback, 65536, nullptr, scheduling),
+    std::invalid_argument);
   scheduling.rt_priority = 99;
-  EXPECT_THROW(Subscriber(socket_path("sched_99.sock"), callback, 65536, nullptr, scheduling), std::invalid_argument);
+  EXPECT_THROW(Subscriber(socket_path("sched_99.sock"), callback, 65536, nullptr, scheduling),
+    std::invalid_argument);
   scheduling.rt_priority = -1;
   EXPECT_THROW(Subscriber(socket_path("sched_negative.sock"), callback, 65536, nullptr, scheduling),
     std::invalid_argument);
 
   // The limit itself is accepted. Without the OS permission it only warns.
   scheduling.rt_priority = uds_ipc::Scheduling::kMaxRtPriority;
-  EXPECT_NO_THROW(Subscriber(socket_path("sched_limit.sock"), callback, 65536, nullptr, scheduling));
+  EXPECT_NO_THROW(Subscriber(socket_path("sched_limit.sock"), callback, 65536, nullptr,
+    scheduling));
 }
 
 TEST(UdsScheduling, AppliesPriorityOrFallsBackAndStillDelivers)
@@ -363,14 +397,15 @@ TEST(UdsScheduling, AppliesPriorityOrFallsBackAndStillDelivers)
 
 TEST(UdsScheduling, RequireThrowsWhenTheOsRefuses)
 {
-  if (!rt_is_denied()) GTEST_SKIP() << "This process may use SCHED_FIFO.";
+  if (!rt_is_denied()) {GTEST_SKIP() << "This process may use SCHED_FIFO.";}
 
   uds_ipc::Scheduling scheduling;
   scheduling.rt_priority = 30;
   scheduling.require = true;
   const std::string path = socket_path("sched_require.sock");
   EXPECT_THROW(
-    uds_ipc::UdsSubscriber<std_msgs::msg::String>(path, [](const std_msgs::msg::String &) {}, 65536, nullptr, scheduling),
+    uds_ipc::UdsSubscriber<std_msgs::msg::String>(path, [](const std_msgs::msg::String &) {}, 65536,
+    nullptr, scheduling),
     std::runtime_error);
   EXPECT_FALSE(std::filesystem::exists(path));  // Nothing is left behind.
 }
@@ -381,7 +416,8 @@ TEST(UdsScheduling, PinsTheReceiveThreadToACpu)
   CPU_ZERO(&allowed);
   ASSERT_EQ(::sched_getaffinity(0, sizeof(allowed), &allowed), 0);
   int cpu = -1;
-  for (int i = CPU_SETSIZE - 1; i >= 0; --i) {  // The last one, to differ from where the test thread starts.
+  // The last one, to differ from where the test thread starts.
+  for (int i = CPU_SETSIZE - 1; i >= 0; --i) {
     if (CPU_ISSET(i, &allowed)) {
       cpu = i;
       break;
