@@ -42,9 +42,13 @@ public:
   UdsClientSocket(const UdsClientSocket &) = delete;
   UdsClientSocket & operator=(const UdsClientSocket &) = delete;
 
-  bool is_connected() const {return fd_ >= 0;}
+    /// True once the subscriber has accepted this connection.
+  bool is_connected() const {return accepted_;}
 
-  bool try_connect();
+    /// Connects if needed, then waits up to timeout (zero: does not wait) for the subscriber to
+    /// accept. Returns is_connected(). While another publisher is connected, this one stays queued
+    /// and keeps returning false.
+  bool try_connect(std::chrono::nanoseconds timeout);
 
     /// While the peer's receive queue is full, waits for room for up to timeout (zero: does not
     /// wait),
@@ -52,9 +56,12 @@ public:
   bool send(const uint8_t * data, size_t length, std::chrono::nanoseconds timeout);
 
 private:
+  void disconnect();
+
   std::string path_;
   size_t send_buffer_bytes_;
   int fd_ = -1;
+  bool accepted_ = false;
 };
 
 }  // namespace detail

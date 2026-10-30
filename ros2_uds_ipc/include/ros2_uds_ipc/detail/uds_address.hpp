@@ -25,6 +25,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include <cstdint>
 #include <cstring>
 #include <string>
 
@@ -40,6 +41,11 @@ inline sockaddr_un make_unix_address(const std::string & path)
   std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
   return addr;
 }
+
+  /// Sent by the subscriber right after it accepts a publisher. A publisher whose connect()
+  /// succeeded is only queued in the listen backlog until then, so it does not send before this
+  /// arrives: while another publisher is connected, nothing it sends would be read.
+inline constexpr uint8_t kAcceptedByte = 1;
 
 }  // namespace detail
 }  // namespace uds_ipc

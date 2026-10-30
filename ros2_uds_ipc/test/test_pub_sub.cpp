@@ -20,6 +20,8 @@
 
 
 #include <sched.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include <gtest/gtest.h>
@@ -27,6 +29,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -36,6 +39,7 @@
 #include <std_msgs/msg/color_rgba.hpp>
 #include <std_msgs/msg/string.hpp>
 
+#include "ros2_uds_ipc/detail/uds_address.hpp"
 #include "ros2_uds_ipc/uds_publisher.hpp"
 #include "ros2_uds_ipc/uds_subscriber.hpp"
 
@@ -73,6 +77,7 @@ TEST(UdsPubSub, DeliversMessagesInOrder)
     });
 
   uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+  ASSERT_TRUE(publisher.connect(std::chrono::seconds(5)));
   for (size_t i = 0; i < message_count; ++i) {
     std_msgs::msg::String msg;
     msg.data = "message " + std::to_string(i);
@@ -108,6 +113,7 @@ TEST(UdsPubSub, DeliversFixedSizeMessagesAsRawBytes)
     });
 
   uds_ipc::UdsPublisher<std_msgs::msg::ColorRGBA> publisher(path);
+  ASSERT_TRUE(publisher.connect(std::chrono::seconds(5)));
   for (size_t i = 0; i < message_count; ++i) {
     std_msgs::msg::ColorRGBA msg;
     msg.r = static_cast<float>(i);
@@ -149,6 +155,7 @@ TEST(UdsPubSub, FullQueueDropsWithoutTimeoutAndKeepsConnection)
     });
 
   uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+  ASSERT_TRUE(publisher.connect(std::chrono::seconds(5)));
   size_t sent = 0;
   bool dropped = false;
   for (size_t i = 0; i < 1000 && !dropped; ++i) {
@@ -190,6 +197,7 @@ TEST(UdsPubSub, SendBufferSizeBoundsTheQueue)
         });
 
       uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path, nullptr, send_buffer_bytes);
+      EXPECT_TRUE(publisher.connect(std::chrono::seconds(5)));
       size_t accepted = 0;
       while (accepted < 100000 && publisher.publish(msg)) {
         ++accepted;
@@ -226,6 +234,7 @@ TEST(UdsPubSub, SendTimeoutWaitsForSlowSubscriber)
     });
 
   uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+  ASSERT_TRUE(publisher.connect(std::chrono::seconds(5)));
   for (size_t i = 0; i < message_count; ++i) {
     ASSERT_TRUE(publisher.publish(msg, std::chrono::seconds(5)));
   }
@@ -251,6 +260,7 @@ TEST(UdsPubSub, DropsMessagesLargerThanMaxMessageSize)
     }, 64);
 
   uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+  ASSERT_TRUE(publisher.connect(std::chrono::seconds(5)));
   std_msgs::msg::String msg;
   msg.data = std::string(1000, 'x');
   ASSERT_TRUE(publisher.publish(msg));
@@ -281,6 +291,7 @@ TEST(UdsPubSub, ReconnectsAfterSubscriberRestart)
   uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
   {
     uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(path, callback);
+    ASSERT_TRUE(publisher.connect(std::chrono::seconds(5)));
     ASSERT_TRUE(publisher.publish(msg));
     std::unique_lock<std::mutex> lock(mutex);
     ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received == 1;}));
@@ -290,9 +301,124 @@ TEST(UdsPubSub, ReconnectsAfterSubscriberRestart)
   EXPECT_FALSE(publisher.publish(msg));
 
   uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(path, callback);
+  ASSERT_TRUE(publisher.connect(std::chrono::seconds(5)));
   ASSERT_TRUE(publisher.publish(msg));
   std::unique_lock<std::mutex> lock(mutex);
   EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received == 2;}));
+}
+
+// The connection is 1:1. A second publisher is not accepted while the first is connected, so its
+// messages fail instead of piling up unread; it takes over once the first disconnects.
+TEST(UdsPubSub, SecondPublisherWaitsUntilTheFirstDisconnects)
+{
+  const std::string path = socket_path("second_publisher.sock");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<std::string> received;
+  uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
+    path, [&](const std_msgs::msg::String & msg) {
+      std::lock_guard<std::mutex> lock(mutex);
+      received.push_back(msg.data);
+      cv.notify_one();
+    });
+
+  uds_ipc::UdsPublisher<std_msgs::msg::String> second(path);
+  std_msgs::msg::String msg;
+  {
+    uds_ipc::UdsPublisher<std_msgs::msg::String> first(path);
+    ASSERT_TRUE(first.connect(std::chrono::seconds(5)));
+
+    EXPECT_FALSE(second.connect(std::chrono::milliseconds(300)));
+    msg.data = "from second while first is connected";
+    EXPECT_FALSE(second.publish(msg));
+    EXPECT_FALSE(second.publish(msg, std::chrono::milliseconds(100)));
+    EXPECT_FALSE(second.is_connected());
+
+    msg.data = "from first";
+    ASSERT_TRUE(first.publish(msg));
+  }
+
+  ASSERT_TRUE(second.connect(std::chrono::seconds(5)));
+  msg.data = "from second";
+  ASSERT_TRUE(second.publish(msg));
+
+  std::unique_lock<std::mutex> lock(mutex);
+  ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received.size() == 2;}));
+  EXPECT_EQ(received[0], "from first");
+  EXPECT_EQ(received[1], "from second");
+}
+
+// Path checks when a subscriber starts
+
+TEST(UdsPath, RefusesAPathAnotherSubscriberIsListeningOn)
+{
+  const std::string path = socket_path("taken.sock");
+  std::mutex mutex;
+  std::condition_variable cv;
+  size_t received = 0;
+  uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
+    path, [&](const std_msgs::msg::String &) {
+      std::lock_guard<std::mutex> lock(mutex);
+      ++received;
+      cv.notify_one();
+    });
+
+  EXPECT_THROW(
+    uds_ipc::UdsSubscriber<std_msgs::msg::String>(path, [](const std_msgs::msg::String &) {}),
+    std::runtime_error);
+
+  // The first subscriber still owns the path.
+  uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+  ASSERT_TRUE(publisher.connect(std::chrono::seconds(5)));
+  std_msgs::msg::String msg;
+  msg.data = "hello";
+  ASSERT_TRUE(publisher.publish(msg));
+  std::unique_lock<std::mutex> lock(mutex);
+  EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received == 1;}));
+}
+
+TEST(UdsPath, RefusesAPathThatIsNotASocket)
+{
+  const std::string path = socket_path("regular_file.sock");
+  std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+  std::ofstream(path) << "keep me";
+
+  EXPECT_THROW(
+    uds_ipc::UdsSubscriber<std_msgs::msg::String>(path, [](const std_msgs::msg::String &) {}),
+    std::runtime_error);
+  EXPECT_TRUE(std::filesystem::is_regular_file(path));
+  std::filesystem::remove(path);
+}
+
+// A socket file left by a subscriber that crashed is replaced.
+TEST(UdsPath, ReplacesAStaleSocketFile)
+{
+  const std::string path = socket_path("stale.sock");
+  std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+  const int fd = ::socket(AF_UNIX, SOCK_SEQPACKET, 0);
+  const sockaddr_un addr = uds_ipc::detail::make_unix_address(path);
+  ASSERT_EQ(::bind(fd, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)), 0);
+  ::close(fd);
+  ASSERT_TRUE(std::filesystem::is_socket(path));
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  size_t received = 0;
+  uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
+    path, [&](const std_msgs::msg::String &) {
+      std::lock_guard<std::mutex> lock(mutex);
+      ++received;
+      cv.notify_one();
+    });
+
+  uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+  ASSERT_TRUE(publisher.connect(std::chrono::seconds(5)));
+  std_msgs::msg::String msg;
+  msg.data = "hello";
+  ASSERT_TRUE(publisher.publish(msg));
+  std::unique_lock<std::mutex> lock(mutex);
+  EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received == 1;}));
 }
 
 // Receive thread scheduling
@@ -331,6 +457,7 @@ CallbackThread run_with_scheduling(
   if (applied) {*applied = subscriber.scheduling_applied();}
 
   uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+  EXPECT_TRUE(publisher.connect(std::chrono::seconds(5)));
   std_msgs::msg::String msg;
   msg.data = "x";
   EXPECT_TRUE(publisher.publish(msg));

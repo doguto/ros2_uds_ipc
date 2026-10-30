@@ -69,7 +69,9 @@ zero-copy only speed up the copy, so this remains.
   bytes can also be forwarded to a regular DDS topic for debugging and recording. The DDS publish runs
   on a dedicated thread and only while the mirror topic has subscribers.
 
-The connection is 1:1: one `UdsPublisher` talks to one `UdsSubscriber` through one socket path.
+The connection is 1:1: one `UdsPublisher` talks to one `UdsSubscriber` through one socket path. A second
+publisher is not accepted while one is connected, so its `publish()` returns `false` (nothing piles up
+unread); it takes over once the first one disconnects. A second subscriber on a path that is in use throws.
 
 ## Requirements
 
@@ -117,7 +119,9 @@ uds_ipc::UdsSubscriber<sensor_msgs::msg::JointState> subscriber(
   });
 ```
 
-The constructor throws `std::runtime_error` if the socket cannot be set up. The third argument,
+The constructor throws `std::runtime_error` if the socket cannot be set up: for example when another
+subscriber is listening on the path, or the path exists and is not a socket. A socket file left by a
+subscriber that crashed is replaced. The third argument,
 `max_message_size` (default 65536 bytes), is the largest serialized message that can be received;
 anything larger is dropped.
 
@@ -135,6 +139,16 @@ if (!publisher.publish(msg)) {
 
 // Wait for up to 10 ms for a slow subscriber instead of dropping the message.
 publisher.publish(msg, std::chrono::milliseconds(10));
+```
+
+`publish()` connects lazily, and the connection is ready only once the subscriber has accepted it, so a
+non-blocking `publish()` right after the subscriber starts may return `false`. To deliver from the first
+message, connect before entering the loop:
+
+```cpp
+if (!publisher.connect(std::chrono::seconds(1))) {
+  // The subscriber is not listening, or another publisher is connected to it.
+}
 ```
 
 How many messages may wait for the subscriber is bounded by the socket send buffer. The third constructor

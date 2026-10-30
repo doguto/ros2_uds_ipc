@@ -46,25 +46,54 @@ UdsClientSocket::~UdsClientSocket()
   }
 }
 
-bool UdsClientSocket::try_connect()
+bool UdsClientSocket::try_connect(std::chrono::nanoseconds timeout)
 {
-  const int fd = ::socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0);
-  if (fd < 0) {return false;}
+  if (accepted_) {return true;}
 
-  if (send_buffer_bytes_ > 0) {
-      // On AF_UNIX the messages waiting in the peer's receive queue are charged to the sender's
-      // buffer,
-      // so this is what bounds the queue. Best effort: the kernel clamps it to net.core.wmem_max.
-    const int size = static_cast<int>(send_buffer_bytes_);
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+  if (fd_ < 0) {
+    const int fd = ::socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0);
+    if (fd < 0) {return false;}
+
+    if (send_buffer_bytes_ > 0) {
+        // On AF_UNIX the messages waiting in the peer's receive queue are charged to the sender's
+        // buffer,
+        // so this is what bounds the queue. Best effort: the kernel clamps it to net.core.wmem_max.
+      const int size = static_cast<int>(send_buffer_bytes_);
+      ::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+    }
+    const sockaddr_un addr = make_unix_address(path_);
+    if (::connect(fd, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) != 0) {
+      ::close(fd);
+      return false;
+    }
+    fd_ = fd;
   }
-  const sockaddr_un addr = make_unix_address(path_);
-  if (::connect(fd, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) != 0) {
-    ::close(fd);
-    return false;
+
+    // Connected, but possibly only queued in the listen backlog: wait for the subscriber to accept.
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (true) {
+    uint8_t byte = 0;
+    const ssize_t received = ::recv(fd_, &byte, 1, MSG_DONTWAIT);
+    if (received == 1 && byte == kAcceptedByte) {
+      accepted_ = true;
+      return true;
+    }
+    if (received < 0 && errno == EINTR) {continue;}
+    if (received >= 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {break;}
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) {return false;}
+
+    const auto remaining = deadline - now;
+    timespec ts{};
+    ts.tv_sec = std::chrono::duration_cast<std::chrono::seconds>(remaining).count();
+    ts.tv_nsec = (remaining % std::chrono::seconds(1)).count();
+    pollfd pfd{fd_, POLLIN, 0};
+    ::ppoll(&pfd, 1, &ts, nullptr);
   }
-  fd_ = fd;
-  return true;
+    // The subscriber went away before accepting.
+  disconnect();
+  return false;
 }
 
 bool UdsClientSocket::send(const uint8_t * data, size_t length, std::chrono::nanoseconds timeout)
@@ -94,9 +123,15 @@ bool UdsClientSocket::send(const uint8_t * data, size_t length, std::chrono::nan
     pollfd pfd{fd_, POLLOUT, 0};
     ::ppoll(&pfd, 1, &ts, nullptr);
   }
+  disconnect();
+  return false;
+}
+
+void UdsClientSocket::disconnect()
+{
   ::close(fd_);
   fd_ = -1;
-  return false;
+  accepted_ = false;
 }
 
 }  // namespace detail

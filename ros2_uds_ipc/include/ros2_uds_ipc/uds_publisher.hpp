@@ -62,17 +62,16 @@ public:
   UdsPublisher & operator=(const UdsPublisher &) = delete;
 
     /// Returns false if not connected or if sending failed.
-    /// send_timeout: how long to wait while the subscriber's receive queue is full. With the
-    /// default (zero)
-    /// publish() never blocks and the message is dropped instead; a message is never dropped
-    /// silently.
+    /// send_timeout: how long to wait for the subscriber to accept the connection, and while its
+    /// receive queue is full. With the default (zero) publish() never blocks and the message is
+    /// dropped instead; a message is never dropped silently.
   bool publish(
     const MessageT & msg,
     std::chrono::nanoseconds send_timeout = std::chrono::nanoseconds::zero()
   )
   {
     const bool mirroring = mirror_ && mirror_->has_subscribers();
-    if (!socket_.is_connected() && !socket_.try_connect() && !mirroring) {
+    if (!socket_.is_connected() && !socket_.try_connect(send_timeout) && !mirroring) {
       return false;
     }
 
@@ -97,6 +96,18 @@ public:
       return sent;
     }
   }
+
+    /// Connects to the subscriber, waiting up to timeout for it to accept. Call it before a
+    /// non-blocking publish() loop so that the first messages are not dropped while connecting.
+    /// Returns false while the subscriber is not listening or another publisher is connected to it
+    /// (the connection is 1:1; this one takes over once the other disconnects).
+  bool connect(std::chrono::nanoseconds timeout)
+  {
+    return socket_.try_connect(timeout);
+  }
+
+    /// True once the subscriber has accepted the connection, until a send detects that it is gone.
+  bool is_connected() const {return socket_.is_connected();}
 
 private:
   detail::UdsClientSocket socket_;
