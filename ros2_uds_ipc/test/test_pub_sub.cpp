@@ -421,6 +421,41 @@ TEST(UdsPath, ReplacesAStaleSocketFile)
   EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received == 1;}));
 }
 
+// Settings are checked when a publisher or subscriber is created
+
+TEST(UdsValidation, RejectsUnusableSocketPaths)
+{
+  const auto noop = [](const std_msgs::msg::String &) {};
+  const std::string too_long = "/tmp/" + std::string(sizeof(sockaddr_un::sun_path), 'x');
+  const std::string max_length = "/tmp/" + std::string(sizeof(sockaddr_un::sun_path) - 6, 'x');
+  for (const std::string & path :
+    {std::string(), too_long, std::string("/tmp/dir/"), std::string("/tmp/a\0b", 8)})
+  {
+    EXPECT_THROW(uds_ipc::UdsPublisher<std_msgs::msg::String>{path}, std::invalid_argument);
+    EXPECT_THROW(
+      (uds_ipc::UdsSubscriber<std_msgs::msg::String>{path, noop}), std::invalid_argument);
+  }
+  EXPECT_NO_THROW(uds_ipc::UdsPublisher<std_msgs::msg::String>{max_length});
+}
+
+TEST(UdsValidation, RejectsInvalidSettings)
+{
+  const std::string path = socket_path("settings.sock");
+  EXPECT_THROW(
+    (uds_ipc::UdsSubscriber<std_msgs::msg::String>{path, nullptr}), std::invalid_argument);
+  EXPECT_THROW(
+    (uds_ipc::UdsSubscriber<std_msgs::msg::String>{path, [](const std_msgs::msg::String &) {}, 0}),
+    std::invalid_argument);
+  EXPECT_THROW(
+    (uds_ipc::UdsPublisher<std_msgs::msg::String>{path, nullptr, size_t{1} << 40}),
+    std::invalid_argument);
+
+  // Nothing was left behind, so the path is still free.
+  EXPECT_FALSE(std::filesystem::exists(path));
+  EXPECT_NO_THROW(
+    (uds_ipc::UdsSubscriber<std_msgs::msg::String>{path, [](const std_msgs::msg::String &) {}}));
+}
+
 // Receive thread scheduling
 
 namespace

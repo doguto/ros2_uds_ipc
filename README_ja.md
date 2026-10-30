@@ -120,7 +120,9 @@ uds_ipc::UdsSubscriber<sensor_msgs::msg::JointState> subscriber(
 
 ソケットを準備できなかった場合、コンストラクタは `std::runtime_error` を投げます。別の subscriber が
 そのパスで待ち受けている場合や、パスにソケット以外のファイルがある場合も同様です。クラッシュした
-subscriber が残したソケットファイルは置き換えます。第 3 引数の
+subscriber が残したソケットファイルは置き換えます。不正な設定は、publisher・subscriber とも
+コンストラクタが `std::invalid_argument` を投げます。空のパスや 107 バイト (`AF_UNIX` の上限) を超えるパス、
+空のコールバック、0 の `max_message_size` などです。第 3 引数の
 `max_message_size` (既定値 65536 バイト) は受信できるシリアライズ済みメッセージの最大サイズで、
 これを超えるメッセージは破棄されます。
 

@@ -43,8 +43,8 @@ public:
 
     // Each datagram is received into buffer, then on_receive is called with its length.
     // buffer must outlive this object.
-    // scheduling: applied to the receive thread. Throws std::invalid_argument if it is out of
-    // range, and
+    // scheduling: applied to the receive thread. Throws std::invalid_argument if path is not a
+    // usable socket path, capacity is 0 or scheduling is out of range, and
     // std::runtime_error if the OS refuses it and scheduling.require is set.
   UdsServerSocket(
     std::string path, uint8_t * buffer, size_t capacity, ReceiveHandler on_receive,

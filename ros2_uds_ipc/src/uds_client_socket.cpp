@@ -27,6 +27,8 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <climits>
+#include <stdexcept>
 #include <utility>
 
 #include "ros2_uds_ipc/detail/uds_address.hpp"
@@ -37,7 +39,13 @@ namespace detail
 {
 UdsClientSocket::UdsClientSocket(std::string path, size_t send_buffer_bytes)
 : path_(std::move(path)), send_buffer_bytes_(send_buffer_bytes)
-{}
+{
+  validate_socket_path(path_, "UdsPublisher");
+  if (send_buffer_bytes_ > static_cast<size_t>(INT_MAX)) {
+    throw std::invalid_argument(
+            "UdsPublisher: send_buffer_bytes must be at most " + std::to_string(INT_MAX));
+  }
+}
 
 UdsClientSocket::~UdsClientSocket()
 {

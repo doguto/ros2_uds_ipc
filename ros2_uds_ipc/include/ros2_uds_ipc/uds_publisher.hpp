@@ -49,6 +49,8 @@ public:
     // send_buffer_bytes: how many bytes of messages may wait for the subscriber (SO_SNDBUF) before
     // publish()
     // fails or waits. 0 keeps the system default; the kernel clamps the value to net.core.wmem_max.
+    // Throws std::invalid_argument if path is not a usable socket path (empty, longer than 107
+    // bytes, ...) or send_buffer_bytes does not fit in an int.
   explicit UdsPublisher(
     std::string path,
     rclcpp::GenericPublisher::SharedPtr mirror = nullptr,

@@ -36,6 +36,8 @@ class UdsClientSocket
 {
 public:
     // send_buffer_bytes: SO_SNDBUF of the socket. 0 keeps the system default.
+    // Throws std::invalid_argument if path is not a usable socket path or send_buffer_bytes does
+    // not fit in an int.
   explicit UdsClientSocket(std::string path, size_t send_buffer_bytes = 0);
   ~UdsClientSocket();
 

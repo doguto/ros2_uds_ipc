@@ -121,7 +121,9 @@ uds_ipc::UdsSubscriber<sensor_msgs::msg::JointState> subscriber(
 
 The constructor throws `std::runtime_error` if the socket cannot be set up: for example when another
 subscriber is listening on the path, or the path exists and is not a socket. A socket file left by a
-subscriber that crashed is replaced. The third argument,
+subscriber that crashed is replaced. Invalid settings throw `std::invalid_argument` from the constructor, on
+both sides: a socket path that is empty or longer than 107 bytes (the `AF_UNIX` limit), an empty callback,
+or a `max_message_size` of 0. The third argument,
 `max_message_size` (default 65536 bytes), is the largest serialized message that can be received;
 anything larger is dropped.
 

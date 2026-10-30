@@ -34,8 +34,8 @@
 #include <filesystem>
 #include <future>
 #include <memory>
-#include <string>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include <rclcpp/logging.hpp>
@@ -95,6 +95,10 @@ UdsServerSocket::UdsServerSocket(
   on_receive_(std::move(on_receive)),
   scheduling_(scheduling)
 {
+  validate_socket_path(path_, "UdsSubscriber");
+  if (capacity_ == 0) {
+    throw std::invalid_argument("UdsSubscriber: max_message_size must be greater than 0");
+  }
   if (scheduling_.rt_priority < 0 || scheduling_.rt_priority > Scheduling::kMaxRtPriority) {
     throw std::invalid_argument(
         "UdsSubscriber: rt_priority must be 0 (off) or 1 - " +
