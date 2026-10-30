@@ -56,7 +56,6 @@ class UdsMirrorWorker
 {
 public:
     // When more than max_queue messages are queued within one period, the oldest ones are dropped.
-    // Throws std::invalid_argument if publisher is null, max_queue is 0 or period is not positive.
   explicit UdsMirrorWorker(
     rclcpp::GenericPublisher::SharedPtr publisher, size_t max_queue = 100,
     std::chrono::milliseconds period = std::chrono::milliseconds(10)

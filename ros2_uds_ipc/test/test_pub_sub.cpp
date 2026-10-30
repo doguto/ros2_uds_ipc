@@ -307,8 +307,6 @@ TEST(UdsPubSub, ReconnectsAfterSubscriberRestart)
   EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received == 2;}));
 }
 
-// The connection is 1:1. A second publisher is not accepted while the first is connected, so its
-// messages fail instead of piling up unread; it takes over once the first disconnects.
 TEST(UdsPubSub, SecondPublisherWaitsUntilTheFirstDisconnects)
 {
   const std::string path = socket_path("second_publisher.sock");
@@ -349,8 +347,6 @@ TEST(UdsPubSub, SecondPublisherWaitsUntilTheFirstDisconnects)
   EXPECT_EQ(received[1], "from second");
 }
 
-// Path checks when a subscriber starts
-
 TEST(UdsPath, RefusesAPathAnotherSubscriberIsListeningOn)
 {
   const std::string path = socket_path("taken.sock");
@@ -368,7 +364,6 @@ TEST(UdsPath, RefusesAPathAnotherSubscriberIsListeningOn)
     uds_ipc::UdsSubscriber<std_msgs::msg::String>(path, [](const std_msgs::msg::String &) {}),
     std::runtime_error);
 
-  // The first subscriber still owns the path.
   uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
   ASSERT_TRUE(publisher.connect(std::chrono::seconds(5)));
   std_msgs::msg::String msg;
@@ -391,7 +386,6 @@ TEST(UdsPath, RefusesAPathThatIsNotASocket)
   std::filesystem::remove(path);
 }
 
-// A socket file left by a subscriber that crashed is replaced.
 TEST(UdsPath, ReplacesAStaleSocketFile)
 {
   const std::string path = socket_path("stale.sock");
@@ -421,8 +415,6 @@ TEST(UdsPath, ReplacesAStaleSocketFile)
   EXPECT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received == 1;}));
 }
 
-// Settings are checked when a publisher or subscriber is created
-
 TEST(UdsValidation, RejectsUnusableSocketPaths)
 {
   const auto noop = [](const std_msgs::msg::String &) {};
@@ -450,7 +442,6 @@ TEST(UdsValidation, RejectsInvalidSettings)
     (uds_ipc::UdsPublisher<std_msgs::msg::String>{path, nullptr, size_t{1} << 40}),
     std::invalid_argument);
 
-  // Nothing was left behind, so the path is still free.
   EXPECT_FALSE(std::filesystem::exists(path));
   EXPECT_NO_THROW(
     (uds_ipc::UdsSubscriber<std_msgs::msg::String>{path, [](const std_msgs::msg::String &) {}}));

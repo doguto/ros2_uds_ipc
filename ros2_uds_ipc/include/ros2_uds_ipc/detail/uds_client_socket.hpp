@@ -36,20 +36,15 @@ class UdsClientSocket
 {
 public:
     // send_buffer_bytes: SO_SNDBUF of the socket. 0 keeps the system default.
-    // Throws std::invalid_argument if path is not a usable socket path or send_buffer_bytes does
-    // not fit in an int.
   explicit UdsClientSocket(std::string path, size_t send_buffer_bytes = 0);
   ~UdsClientSocket();
 
   UdsClientSocket(const UdsClientSocket &) = delete;
   UdsClientSocket & operator=(const UdsClientSocket &) = delete;
 
-    /// True once the subscriber has accepted this connection.
   bool is_connected() const {return accepted_;}
 
-    /// Connects if needed, then waits up to timeout (zero: does not wait) for the subscriber to
-    /// accept. Returns is_connected(). While another publisher is connected, this one stays queued
-    /// and keeps returning false.
+    /// Waits up to timeout for the subscriber to accept.
   bool try_connect(std::chrono::nanoseconds timeout);
 
     /// While the peer's receive queue is full, waits for room for up to timeout (zero: does not

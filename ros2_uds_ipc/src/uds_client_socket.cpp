@@ -77,7 +77,6 @@ bool UdsClientSocket::try_connect(std::chrono::nanoseconds timeout)
     fd_ = fd;
   }
 
-    // Connected, but possibly only queued in the listen backlog: wait for the subscriber to accept.
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (true) {
     uint8_t byte = 0;
@@ -99,7 +98,6 @@ bool UdsClientSocket::try_connect(std::chrono::nanoseconds timeout)
     pollfd pfd{fd_, POLLIN, 0};
     ::ppoll(&pfd, 1, &ts, nullptr);
   }
-    // The subscriber went away before accepting.
   disconnect();
   return false;
 }

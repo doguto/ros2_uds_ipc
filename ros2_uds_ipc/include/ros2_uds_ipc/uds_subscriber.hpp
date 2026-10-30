@@ -57,8 +57,7 @@ public:
     // by default.
     // Throws std::runtime_error if the socket cannot be set up, or if the OS refuses
     // scheduling.require.
-    // Throws std::invalid_argument if path is not a usable socket path (empty, longer than 107
-    // bytes, ...), callback is empty, max_message_size is 0 or scheduling is out of range.
+    // Throws std::invalid_argument on invalid settings.
   UdsSubscriber(
     std::string path,
     Callback callback,

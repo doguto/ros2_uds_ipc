@@ -34,8 +34,6 @@ namespace uds_ipc
 {
 namespace detail
 {
-  /// Throws std::invalid_argument unless path can be used as the socket file. owner names the
-  /// class in the message.
 inline void validate_socket_path(const std::string & path, const std::string & owner)
 {
   constexpr size_t kMaxLength = sizeof(sockaddr_un::sun_path) - 1;
@@ -55,7 +53,7 @@ inline void validate_socket_path(const std::string & path, const std::string & o
   }
 }
 
-  /// Builds an AF_UNIX address for a path that passed validate_socket_path().
+  /// Builds an AF_UNIX address for path.
 inline sockaddr_un make_unix_address(const std::string & path)
 {
   sockaddr_un addr{};
@@ -64,9 +62,7 @@ inline sockaddr_un make_unix_address(const std::string & path)
   return addr;
 }
 
-  /// Sent by the subscriber right after it accepts a publisher. A publisher whose connect()
-  /// succeeded is only queued in the listen backlog until then, so it does not send before this
-  /// arrives: while another publisher is connected, nothing it sends would be read.
+  /// Sent on accept. Until then a connected publisher may only be queued in the listen backlog.
 inline constexpr uint8_t kAcceptedByte = 1;
 
 }  // namespace detail
