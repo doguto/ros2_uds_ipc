@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -56,7 +57,7 @@ public:
     // by default.
     // Throws std::runtime_error if the socket cannot be set up, or if the OS refuses
     // scheduling.require.
-    // Throws std::invalid_argument if scheduling is out of range.
+    // Throws std::invalid_argument on invalid settings.
   UdsSubscriber(
     std::string path,
     Callback callback,
@@ -64,7 +65,7 @@ public:
     rclcpp::GenericPublisher::SharedPtr mirror = nullptr,
     Scheduling scheduling = {}
   )
-  : callback_(std::move(callback)),
+  : callback_(require_callback(std::move(callback))),
     mirror_(mirror ? std::make_unique<UdsMirrorWorker>(std::move(mirror)) : nullptr),
     serialized_(detail::is_raw_copyable<MessageT> ? 0 : max_message_size),
     socket_(
@@ -80,6 +81,14 @@ public:
   UdsSubscriber & operator=(const UdsSubscriber &) = delete;
 
 private:
+  static Callback require_callback(Callback callback)
+  {
+    if (!callback) {
+      throw std::invalid_argument("UdsSubscriber: the callback is empty");
+    }
+    return callback;
+  }
+
     // Raw-copyable messages are received straight into msg_; others into the CDR buffer.
   uint8_t * receive_buffer()
   {

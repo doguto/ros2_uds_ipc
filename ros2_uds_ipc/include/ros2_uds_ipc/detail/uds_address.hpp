@@ -25,14 +25,35 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 
 namespace uds_ipc
 {
 namespace detail
 {
-  /// Builds an AF_UNIX address for path. A path longer than sun_path is truncated.
+inline void validate_socket_path(const std::string & path, const std::string & owner)
+{
+  constexpr size_t kMaxLength = sizeof(sockaddr_un::sun_path) - 1;
+  if (path.empty()) {
+    throw std::invalid_argument(owner + ": the socket path is empty");
+  }
+  if (path.find('\0') != std::string::npos) {
+    throw std::invalid_argument(owner + ": the socket path contains a NUL character");
+  }
+  if (path.size() > kMaxLength) {
+    throw std::invalid_argument(
+            owner + ": the socket path is " + std::to_string(path.size()) + " bytes, over the " +
+            std::to_string(kMaxLength) + "-byte limit of AF_UNIX: " + path);
+  }
+  if (path.back() == '/') {
+    throw std::invalid_argument(owner + ": the socket path names a directory: " + path);
+  }
+}
+
+  /// Builds an AF_UNIX address for path.
 inline sockaddr_un make_unix_address(const std::string & path)
 {
   sockaddr_un addr{};
@@ -40,6 +61,9 @@ inline sockaddr_un make_unix_address(const std::string & path)
   std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
   return addr;
 }
+
+  /// Sent on accept. Until then a connected publisher may only be queued in the listen backlog.
+inline constexpr uint8_t kAcceptedByte = 1;
 
 }  // namespace detail
 }  // namespace uds_ipc

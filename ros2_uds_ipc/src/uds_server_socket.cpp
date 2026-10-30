@@ -25,6 +25,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -34,6 +35,7 @@
 #include <future>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include <rclcpp/logging.hpp>
@@ -44,6 +46,41 @@ namespace uds_ipc
 {
 namespace detail
 {
+namespace
+{
+  /// Removes a socket file left by a crashed subscriber.
+void remove_stale_socket(const std::string & path)
+{
+  struct stat st{};
+  if (::lstat(path.c_str(), &st) != 0) {
+    if (errno == ENOENT) {return;}
+    throw std::runtime_error(
+        "UdsSubscriber: cannot access " + path + " (" + std::strerror(errno) + ")");
+  }
+  if (!S_ISSOCK(st.st_mode)) {
+    throw std::runtime_error("UdsSubscriber: " + path + " exists and is not a socket");
+  }
+
+  const int fd = ::socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0);
+  if (fd < 0) {
+    throw std::runtime_error("UdsSubscriber: socket() failed for " + path);
+  }
+  const sockaddr_un addr = make_unix_address(path);
+  const int result = ::connect(fd, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr));
+  const int error = errno;
+  ::close(fd);
+    // EAGAIN: the backlog is full, so someone is listening.
+  if (result == 0 || error == EAGAIN) {
+    throw std::runtime_error("UdsSubscriber: another subscriber is listening on " + path);
+  }
+  if (error != ECONNREFUSED) {
+    throw std::runtime_error(
+        "UdsSubscriber: cannot check " + path + " (" + std::strerror(error) + ")");
+  }
+  ::unlink(path.c_str());
+}
+}  // namespace
+
 UdsServerSocket::UdsServerSocket(
   std::string path,
   uint8_t * buffer,
@@ -57,6 +94,10 @@ UdsServerSocket::UdsServerSocket(
   on_receive_(std::move(on_receive)),
   scheduling_(scheduling)
 {
+  validate_socket_path(path_, "UdsSubscriber");
+  if (capacity_ == 0) {
+    throw std::invalid_argument("UdsSubscriber: max_message_size must be greater than 0");
+  }
   if (scheduling_.rt_priority < 0 || scheduling_.rt_priority > Scheduling::kMaxRtPriority) {
     throw std::invalid_argument(
         "UdsSubscriber: rt_priority must be 0 (off) or 1 - " +
@@ -72,7 +113,7 @@ UdsServerSocket::UdsServerSocket(
     std::filesystem::create_directories(parent);
   }
 
-  ::unlink(path_.c_str());    // Remove a stale socket file left by a previous run.
+  remove_stale_socket(path_);
 
   listen_fd_ = ::socket(AF_UNIX, SOCK_SEQPACKET, 0);
   if (listen_fd_ < 0) {
@@ -166,7 +207,10 @@ void UdsServerSocket::accept_loop()
     const int client_fd = ::accept(listen_fd_, nullptr, nullptr);
     if (client_fd < 0) {continue;}
 
-    recv_loop(client_fd);
+    const uint8_t accepted = kAcceptedByte;
+    if (::send(client_fd, &accepted, 1, MSG_DONTWAIT | MSG_NOSIGNAL) == 1) {
+      recv_loop(client_fd);
+    }
     ::close(client_fd);
   }
 }

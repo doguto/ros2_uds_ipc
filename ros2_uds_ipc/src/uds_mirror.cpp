@@ -22,6 +22,7 @@
 #include "ros2_uds_ipc/uds_mirror.hpp"
 
 #include <cstring>
+#include <stdexcept>
 #include <utility>
 
 #include <rclcpp/serialized_message.hpp>
@@ -35,9 +36,19 @@ UdsMirrorWorker::UdsMirrorWorker(
 )
 : publisher_(std::move(publisher)),
   period_(period),
-  slots_(max_queue),
-  thread_(&UdsMirrorWorker::run, this)
-{}
+  slots_(max_queue)
+{
+  if (!publisher_) {
+    throw std::invalid_argument("UdsMirrorWorker: the publisher is null");
+  }
+  if (max_queue == 0) {
+    throw std::invalid_argument("UdsMirrorWorker: max_queue must be greater than 0");
+  }
+  if (period_ <= std::chrono::milliseconds::zero()) {
+    throw std::invalid_argument("UdsMirrorWorker: period must be positive");
+  }
+  thread_ = std::thread(&UdsMirrorWorker::run, this);
+}
 
 UdsMirrorWorker::~UdsMirrorWorker()
 {
