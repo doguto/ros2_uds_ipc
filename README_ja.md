@@ -69,6 +69,9 @@
   行い、ミラートピックに購読者がいるときだけ動きます。
 
 接続は 1:1 です。1 つのソケットパスにつき、1 つの `UdsPublisher` と 1 つの `UdsSubscriber` が通信します。
+接続中の publisher がいる間、2 つ目の publisher は受け付けられず、その `publish()` は `false` を返します
+(読まれないまま溜まることはありません)。1 つ目が切断すると 2 つ目が引き継ぎます。使用中のパスに
+2 つ目の subscriber を作ると例外になります。
 
 ## Requirements
 
@@ -115,7 +118,11 @@ uds_ipc::UdsSubscriber<sensor_msgs::msg::JointState> subscriber(
   });
 ```
 
-ソケットを準備できなかった場合、コンストラクタは `std::runtime_error` を投げます。第 3 引数の
+ソケットを準備できなかった場合、コンストラクタは `std::runtime_error` を投げます。別の subscriber が
+そのパスで待ち受けている場合や、パスにソケット以外のファイルがある場合も同様です。クラッシュした
+subscriber が残したソケットファイルは置き換えます。不正な設定は、publisher・subscriber とも
+コンストラクタが `std::invalid_argument` を投げます。空のパスや 107 バイト (`AF_UNIX` の上限) を超えるパス、
+空のコールバック、0 の `max_message_size` などです。第 3 引数の
 `max_message_size` (既定値 65536 バイト) は受信できるシリアライズ済みメッセージの最大サイズで、
 これを超えるメッセージは破棄されます。
 
@@ -134,6 +141,29 @@ if (!publisher.publish(msg)) {
 // 遅い subscriber を最大 10 ms 待ち, メッセージを捨てずに送る.
 publisher.publish(msg, std::chrono::milliseconds(10));
 ```
+
+`publish()` は必要になった時点で接続し、subscriber が接続を受け付けてから送れるようになります。そのため
+subscriber の起動直後のノンブロッキングな `publish()` は `false` を返すことがあります。最初のメッセージから
+届けたい場合は、ループに入る前に接続してください:
+
+```cpp
+if (!publisher.connect(std::chrono::seconds(1))) {
+  // subscriber が待ち受けていないか, 別の publisher が接続中.
+}
+```
+
+publisher が終了せずに固まった場合 (デッドロックや停止したプロセス)、接続は開いたままになり、接続は 1:1
+なので他の publisher は引き継げません。これに備えるには subscriber にアイドルタイムアウトを設定します。
+その時間メッセージが届かなかった接続は閉じられ、待っている次の publisher が受け付けられます。publish
+周期より十分長くしてください。既定では無効です。
+
+```cpp
+uds_ipc::UdsSubscriber<sensor_msgs::msg::JointState> subscriber(
+  "/run/my_robot/joint_command.sock", callback, 65536, nullptr, {}, std::chrono::seconds(1));
+```
+
+subscriber は動作中 `<path>.lock` をロックするので、同時に起動した 2 つの subscriber が同じパスを
+取り合うことはありません。ロックファイルは終了後も残ります。
 
 subscriber 待ちで溜められるメッセージ量は、ソケットの送信バッファで決まります。コンストラクタの第 3 引数で
 バイト数を指定できます (`SO_SNDBUF`。0 はシステムのデフォルト)。カーネルが `net.core.wmem_max` に丸めるので、

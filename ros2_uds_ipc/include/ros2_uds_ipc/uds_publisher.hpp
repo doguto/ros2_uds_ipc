@@ -49,6 +49,7 @@ public:
     // send_buffer_bytes: how many bytes of messages may wait for the subscriber (SO_SNDBUF) before
     // publish()
     // fails or waits. 0 keeps the system default; the kernel clamps the value to net.core.wmem_max.
+    // Throws std::invalid_argument on invalid settings.
   explicit UdsPublisher(
     std::string path,
     rclcpp::GenericPublisher::SharedPtr mirror = nullptr,
@@ -72,7 +73,7 @@ public:
   )
   {
     const bool mirroring = mirror_ && mirror_->has_subscribers();
-    if (!socket_.is_connected() && !socket_.try_connect() && !mirroring) {
+    if (!socket_.is_connected() && !socket_.try_connect(send_timeout) && !mirroring) {
       return false;
     }
 
@@ -97,6 +98,14 @@ public:
       return sent;
     }
   }
+
+    /// Returns false while another publisher is connected (it takes over once that one leaves).
+  bool connect(std::chrono::nanoseconds timeout)
+  {
+    return socket_.try_connect(timeout);
+  }
+
+  bool is_connected() const {return socket_.is_connected();}
 
 private:
   detail::UdsClientSocket socket_;
