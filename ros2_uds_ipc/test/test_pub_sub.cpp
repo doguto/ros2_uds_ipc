@@ -19,17 +19,21 @@
 // THE SOFTWARE.
 
 
+#include <fcntl.h>
 #include <sched.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -445,6 +449,173 @@ TEST(UdsValidation, RejectsInvalidSettings)
   EXPECT_FALSE(std::filesystem::exists(path));
   EXPECT_NO_THROW(
     (uds_ipc::UdsSubscriber<std_msgs::msg::String>{path, [](const std_msgs::msg::String &) {}}));
+}
+
+TEST(UdsPubSub, IdleTimeoutReleasesAHungPublisher)
+{
+  const std::string path = socket_path("idle_timeout.sock");
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<std::string> received;
+  uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
+    path, [&](const std_msgs::msg::String & msg) {
+      std::lock_guard<std::mutex> lock(mutex);
+      received.push_back(msg.data);
+      cv.notify_one();
+    }, 65536, nullptr, {}, std::chrono::milliseconds(300));
+
+    // Connects and then sends nothing, like a publisher whose process hangs.
+  uds_ipc::UdsPublisher<std_msgs::msg::String> hung(path);
+  ASSERT_TRUE(hung.connect(std::chrono::seconds(5)));
+
+  uds_ipc::UdsPublisher<std_msgs::msg::String> second(path);
+  ASSERT_TRUE(second.connect(std::chrono::seconds(5)));
+  std_msgs::msg::String msg;
+  msg.data = "from second";
+  ASSERT_TRUE(second.publish(msg));
+
+  std::unique_lock<std::mutex> lock(mutex);
+  ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(5), [&] {return received.size() == 1;}));
+  EXPECT_EQ(received[0], "from second");
+}
+
+TEST(UdsPubSub, IdleTimeoutKeepsAnActiveConnection)
+{
+  const std::string path = socket_path("idle_active.sock");
+
+  std::atomic<size_t> received{0};
+  uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
+    path, [&](const std_msgs::msg::String &) {++received;},
+    65536, nullptr, {}, std::chrono::milliseconds(300));
+
+  uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+  ASSERT_TRUE(publisher.connect(std::chrono::seconds(5)));
+  std_msgs::msg::String msg;
+  msg.data = "tick";
+  for (int i = 0; i < 10; ++i) {
+    ASSERT_TRUE(publisher.publish(msg)) << "dropped at " << i;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+}
+
+TEST(UdsValidation, RejectsANegativeIdleTimeout)
+{
+  EXPECT_THROW(
+    (uds_ipc::UdsSubscriber<std_msgs::msg::String>{
+    socket_path("negative_idle.sock"), [](const std_msgs::msg::String &) {}, 65536, nullptr, {},
+    std::chrono::milliseconds(-1)}),
+    std::invalid_argument);
+}
+
+TEST(UdsPath, RefusesAPathWhoseLockIsHeld)
+{
+  const std::string path = socket_path("locked.sock");
+  std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+  const int fd = ::open((path + ".lock").c_str(), O_RDONLY | O_CREAT | O_CLOEXEC, 0644);
+  ASSERT_GE(fd, 0);
+  ASSERT_EQ(::flock(fd, LOCK_EX | LOCK_NB), 0);
+
+    // Another subscriber is between the stale-socket check and listen().
+  EXPECT_THROW(
+    uds_ipc::UdsSubscriber<std_msgs::msg::String>(path, [](const std_msgs::msg::String &) {}),
+    std::runtime_error);
+
+  ::close(fd);
+  EXPECT_NO_THROW(
+    uds_ipc::UdsSubscriber<std_msgs::msg::String>(path, [](const std_msgs::msg::String &) {}));
+}
+
+// Stress
+
+TEST(UdsStress, ManyPublisherReconnects)
+{
+  const std::string path = socket_path("stress_reconnect.sock");
+  constexpr size_t kCycles = 300;
+  constexpr size_t kMessagesPerCycle = 10;
+
+  std::atomic<size_t> received{0};
+  uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
+    path, [&](const std_msgs::msg::String &) {++received;});
+
+  std_msgs::msg::String msg;
+  msg.data = "x";
+  for (size_t cycle = 0; cycle < kCycles; ++cycle) {
+    uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+    ASSERT_TRUE(publisher.connect(std::chrono::seconds(5))) << "cycle " << cycle;
+    for (size_t i = 0; i < kMessagesPerCycle; ++i) {
+      ASSERT_TRUE(publisher.publish(msg, std::chrono::seconds(5)));
+    }
+  }
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (received < kCycles * kMessagesPerCycle && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  EXPECT_EQ(received, kCycles * kMessagesPerCycle);
+}
+
+TEST(UdsStress, ManySubscriberRestarts)
+{
+  const std::string path = socket_path("stress_restart.sock");
+  constexpr size_t kCycles = 20;
+
+  std::atomic<size_t> received{0};
+  uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+  std_msgs::msg::String msg;
+  msg.data = "x";
+  for (size_t cycle = 0; cycle < kCycles; ++cycle) {
+    const size_t before = received;
+    uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
+      path, [&](const std_msgs::msg::String &) {++received;});
+      // The first publish after a restart may hit the old connection and fail.
+    publisher.publish(msg);
+    ASSERT_TRUE(publisher.connect(std::chrono::seconds(5))) << "cycle " << cycle;
+    ASSERT_TRUE(publisher.publish(msg, std::chrono::seconds(5))) << "cycle " << cycle;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received == before && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_GT(received, before) << "cycle " << cycle;
+  }
+}
+
+TEST(UdsStress, ContendingPublishersLoseNothingTheyReportedSent)
+{
+  const std::string path = socket_path("stress_contend.sock");
+  constexpr int kPublishers = 4;
+  constexpr int kRounds = 50;
+
+  std::atomic<size_t> received{0};
+  uds_ipc::UdsSubscriber<std_msgs::msg::String> subscriber(
+    path, [&](const std_msgs::msg::String &) {++received;});
+
+  std::atomic<size_t> sent{0};
+  std::vector<std::thread> threads;
+  for (int p = 0; p < kPublishers; ++p) {
+    threads.emplace_back(
+      [&] {
+        std_msgs::msg::String msg;
+        msg.data = "x";
+        for (int round = 0; round < kRounds; ++round) {
+          uds_ipc::UdsPublisher<std_msgs::msg::String> publisher(path);
+          if (!publisher.connect(std::chrono::milliseconds(20))) {continue;}
+          for (int i = 0; i < 5; ++i) {
+            if (publisher.publish(msg, std::chrono::milliseconds(100))) {++sent;}
+          }
+        }
+      });
+  }
+  for (auto & thread : threads) {
+    thread.join();
+  }
+
+  EXPECT_GT(sent, 0u);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (received < sent && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  EXPECT_EQ(received, sent);
 }
 
 // Receive thread scheduling

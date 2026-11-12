@@ -152,6 +152,19 @@ if (!publisher.connect(std::chrono::seconds(1))) {
 }
 ```
 
+publisher が終了せずに固まった場合 (デッドロックや停止したプロセス)、接続は開いたままになり、接続は 1:1
+なので他の publisher は引き継げません。これに備えるには subscriber にアイドルタイムアウトを設定します。
+その時間メッセージが届かなかった接続は閉じられ、待っている次の publisher が受け付けられます。publish
+周期より十分長くしてください。既定では無効です。
+
+```cpp
+uds_ipc::UdsSubscriber<sensor_msgs::msg::JointState> subscriber(
+  "/run/my_robot/joint_command.sock", callback, 65536, nullptr, {}, std::chrono::seconds(1));
+```
+
+subscriber は動作中 `<path>.lock` をロックするので、同時に起動した 2 つの subscriber が同じパスを
+取り合うことはありません。ロックファイルは終了後も残ります。
+
 subscriber 待ちで溜められるメッセージ量は、ソケットの送信バッファで決まります。コンストラクタの第 3 引数で
 バイト数を指定できます (`SO_SNDBUF`。0 はシステムのデフォルト)。カーネルが `net.core.wmem_max` に丸めるので、
 それを超える値にするには sysctl 側も上げてください。

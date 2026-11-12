@@ -23,6 +23,7 @@
 #define ROS2_UDS_IPC__DETAIL__UDS_SERVER_SOCKET_HPP_
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -46,9 +47,12 @@ public:
     // scheduling: applied to the receive thread. Throws std::invalid_argument if it is out of
     // range, and
     // std::runtime_error if the OS refuses it and scheduling.require is set.
+    // idle_timeout: a connection that delivers nothing for this long is closed, so that a publisher
+    // that hangs does not hold the path forever. Zero disables it.
   UdsServerSocket(
     std::string path, uint8_t * buffer, size_t capacity, ReceiveHandler on_receive,
-    Scheduling scheduling = {});
+    Scheduling scheduling = {},
+    std::chrono::milliseconds idle_timeout = std::chrono::milliseconds::zero());
   ~UdsServerSocket();
 
   UdsServerSocket(const UdsServerSocket &) = delete;
@@ -69,7 +73,9 @@ private:
   size_t capacity_;
   ReceiveHandler on_receive_;
   Scheduling scheduling_;
+  std::chrono::milliseconds idle_timeout_;
   bool scheduling_applied_ = true;
+  int lock_fd_ = -1;
   int listen_fd_ = -1;
   std::atomic<bool> running_{true};
   std::thread thread_;

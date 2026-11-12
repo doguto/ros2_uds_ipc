@@ -22,6 +22,7 @@
 #ifndef ROS2_UDS_IPC__UDS_SUBSCRIBER_HPP_
 #define ROS2_UDS_IPC__UDS_SUBSCRIBER_HPP_
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -55,6 +56,9 @@ public:
     // to DDS.
     // scheduling: real-time priority and CPU pinning of the receive thread (see Scheduling). Off
     // by default.
+    // idle_timeout: a connection that delivers no message for this long is closed, so that a
+    // publisher that hangs without exiting does not hold the path forever. Zero (default)
+    // disables it. Set it well above the publish period.
     // Throws std::runtime_error if the socket cannot be set up, or if the OS refuses
     // scheduling.require.
     // Throws std::invalid_argument on invalid settings.
@@ -63,14 +67,15 @@ public:
     Callback callback,
     size_t max_message_size = 65536,
     rclcpp::GenericPublisher::SharedPtr mirror = nullptr,
-    Scheduling scheduling = {}
+    Scheduling scheduling = {},
+    std::chrono::milliseconds idle_timeout = std::chrono::milliseconds::zero()
   )
   : callback_(require_callback(std::move(callback))),
     mirror_(mirror ? std::make_unique<UdsMirrorWorker>(std::move(mirror)) : nullptr),
     serialized_(detail::is_raw_copyable<MessageT> ? 0 : max_message_size),
     socket_(
       std::move(path), receive_buffer(), receive_capacity(),
-      [this](size_t length) {on_receive(length);}, scheduling
+      [this](size_t length) {on_receive(length);}, scheduling, idle_timeout
     )
   {}
 

@@ -153,6 +153,19 @@ if (!publisher.connect(std::chrono::seconds(1))) {
 }
 ```
 
+A publisher that hangs without exiting (a deadlock, a stopped process) keeps its connection open, and
+since the connection is 1:1 no other publisher can take over. To recover from that, give the subscriber
+an idle timeout: a connection that delivers no message for that long is closed, and the next publisher
+in line is accepted. Set it well above the publish period; it is off by default.
+
+```cpp
+uds_ipc::UdsSubscriber<sensor_msgs::msg::JointState> subscriber(
+  "/run/my_robot/joint_command.sock", callback, 65536, nullptr, {}, std::chrono::seconds(1));
+```
+
+The subscriber holds a lock on `<path>.lock` while it runs, so two subscribers starting at the same time
+cannot both take the path. The lock file is left in place on exit.
+
 How many messages may wait for the subscriber is bounded by the socket send buffer. The third constructor
 argument sets it in bytes (`SO_SNDBUF`; 0 keeps the system default). The kernel clamps it to
 `net.core.wmem_max`, so raise that sysctl to go beyond it.

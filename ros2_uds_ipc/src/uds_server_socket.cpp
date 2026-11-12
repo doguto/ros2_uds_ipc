@@ -21,15 +21,19 @@
 
 #include "ros2_uds_ipc/detail/uds_server_socket.hpp"
 
+#include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
 #include <sched.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <future>
@@ -48,6 +52,29 @@ namespace detail
 {
 namespace
 {
+  /// Takes an exclusive lock on path + ".lock" for the lifetime of the subscriber, so that two
+  /// subscribers starting at the same time cannot both decide the socket file is stale. The lock
+  /// file is left in place: removing it would let a third subscriber lock a different file.
+int lock_path(const std::string & path)
+{
+  const std::string lock_file = path + ".lock";
+  const int fd = ::open(lock_file.c_str(), O_RDONLY | O_CREAT | O_CLOEXEC, 0644);
+  if (fd < 0) {
+    throw std::runtime_error(
+        "UdsSubscriber: cannot open " + lock_file + " (" + std::strerror(errno) + ")");
+  }
+  if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
+    const int error = errno;
+    ::close(fd);
+    if (error == EWOULDBLOCK) {
+      throw std::runtime_error("UdsSubscriber: another subscriber is listening on " + path);
+    }
+    throw std::runtime_error(
+        "UdsSubscriber: cannot lock " + lock_file + " (" + std::strerror(error) + ")");
+  }
+  return fd;
+}
+
   /// Removes a socket file left by a crashed subscriber.
 void remove_stale_socket(const std::string & path)
 {
@@ -86,13 +113,15 @@ UdsServerSocket::UdsServerSocket(
   uint8_t * buffer,
   size_t capacity,
   ReceiveHandler on_receive,
-  Scheduling scheduling
+  Scheduling scheduling,
+  std::chrono::milliseconds idle_timeout
 )
 : path_(std::move(path)),
   buffer_(buffer),
   capacity_(capacity),
   on_receive_(std::move(on_receive)),
-  scheduling_(scheduling)
+  scheduling_(scheduling),
+  idle_timeout_(idle_timeout)
 {
   validate_socket_path(path_, "UdsSubscriber");
   if (capacity_ == 0) {
@@ -107,25 +136,38 @@ UdsServerSocket::UdsServerSocket(
   if (scheduling_.cpu < -1 || scheduling_.cpu >= CPU_SETSIZE) {
     throw std::invalid_argument("UdsSubscriber: cpu must be -1 (any) or a valid CPU number");
   }
+  if (idle_timeout_ < std::chrono::milliseconds::zero()) {
+    throw std::invalid_argument("UdsSubscriber: idle_timeout must not be negative");
+  }
 
   const auto parent = std::filesystem::path(path_).parent_path();
   if (!parent.empty()) {
     std::filesystem::create_directories(parent);
   }
 
-  remove_stale_socket(path_);
+  lock_fd_ = lock_path(path_);
+  try {
+    remove_stale_socket(path_);
+  } catch (...) {
+    ::close(lock_fd_);
+    throw;
+  }
 
   listen_fd_ = ::socket(AF_UNIX, SOCK_SEQPACKET, 0);
   if (listen_fd_ < 0) {
+    ::close(lock_fd_);
     throw std::runtime_error("UdsSubscriber: socket() failed for " + path_);
   }
   const sockaddr_un addr = make_unix_address(path_);
   if (::bind(listen_fd_, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) != 0) {
     ::close(listen_fd_);
+    ::close(lock_fd_);
     throw std::runtime_error("UdsSubscriber: bind() failed for " + path_);
   }
   if (::listen(listen_fd_, 1) != 0) {
     ::close(listen_fd_);
+    ::unlink(path_.c_str());
+    ::close(lock_fd_);
     throw std::runtime_error("UdsSubscriber: listen() failed for " + path_);
   }
 
@@ -146,6 +188,7 @@ UdsServerSocket::UdsServerSocket(
     thread_.join();
     ::close(listen_fd_);
     ::unlink(path_.c_str());
+    ::close(lock_fd_);
     throw std::runtime_error("UdsSubscriber: " + error);
   }
   RCLCPP_WARN(
@@ -195,6 +238,8 @@ UdsServerSocket::~UdsServerSocket()
     ::close(listen_fd_);
   }
   ::unlink(path_.c_str());
+    // Released after the unlink, so the next subscriber never sees this one's socket file.
+  ::close(lock_fd_);
 }
 
 void UdsServerSocket::accept_loop()
@@ -217,14 +262,30 @@ void UdsServerSocket::accept_loop()
 
 void UdsServerSocket::recv_loop(int client_fd)
 {
+  constexpr std::chrono::milliseconds kPollPeriod(200);
+  const bool idle_check = idle_timeout_ > std::chrono::milliseconds::zero();
+  const int poll_ms = static_cast<int>(
+    idle_check ? std::min(kPollPeriod, idle_timeout_).count() : kPollPeriod.count());
+  auto last_receive = std::chrono::steady_clock::now();
+
   while (running_) {
     pollfd pfd{client_fd, POLLIN, 0};
-    const int ready = ::poll(&pfd, 1, 200 /* ms */);
-    if (ready <= 0) {continue;}
+    const int ready = ::poll(&pfd, 1, poll_ms);
+    if (ready <= 0) {
+      if (idle_check && std::chrono::steady_clock::now() - last_receive >= idle_timeout_) {
+        RCLCPP_WARN(
+            rclcpp::get_logger("ros2_uds_ipc"),
+            "UdsSubscriber %s: no message for %s ms. Closing the connection.",
+            path_.c_str(), std::to_string(idle_timeout_.count()).c_str());
+        return;
+      }
+      continue;
+    }
 
     const ssize_t received = ::recv(client_fd, buffer_, capacity_, 0);
     if (received <= 0) {return;}  // Disconnected.
 
+    last_receive = std::chrono::steady_clock::now();
     on_receive_(static_cast<size_t>(received));
   }
 }
