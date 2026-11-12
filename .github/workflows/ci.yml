@@ -75,3 +75,39 @@ jobs:
           source /opt/ros/${{ matrix.ros_distro }}/setup.bash
           colcon test --packages-select ros2_uds_ipc --event-handlers console_direct+
           colcon test-result --verbose
+
+  sanitizer:
+    name: sanitizer (${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, thread]
+    steps:
+      - uses: actions/checkout@v4
+
+      # TSan cannot map its shadow memory with the default ASLR entropy of recent kernels.
+      # This is a host setting, so the build runs in a plain docker container rather than a job container.
+      - name: Reduce ASLR entropy
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Build and test
+        run: |
+          case "${{ matrix.sanitizer }}" in
+            address) flags="-fsanitize=address,undefined" ;;
+            thread)  flags="-fsanitize=thread" ;;
+          esac
+          docker run --rm -v "$PWD:/ws" -w /ws -e FLAGS="$flags" ros:jazzy-ros-base bash -c '
+            set -e
+            apt-get update
+            rosdep update --rosdistro jazzy
+            rosdep install --from-paths ros2_uds_ipc --ignore-src -y --rosdistro jazzy
+            source /opt/ros/jazzy/setup.bash
+            colcon build --packages-select ros2_uds_ipc --event-handlers console_cohesion+ \
+              --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                "-DCMAKE_CXX_FLAGS=$FLAGS -fno-omit-frame-pointer -fno-sanitize-recover=all" \
+                "-DCMAKE_SHARED_LINKER_FLAGS=$FLAGS" "-DCMAKE_EXE_LINKER_FLAGS=$FLAGS"
+            colcon test --packages-select ros2_uds_ipc --ctest-args -R test_pub_sub \
+              --event-handlers console_direct+
+            colcon test-result --verbose
+          '
